@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import {
-  STAGES, ensure, inside, loadConfig, loadState, saveState, writeJson, readJson,
+  ensure, inside, loadConfig, loadState, saveState, writeJson, readJson, progressBlock,
   git, assertReady, assertCleanSource, approvalValid, featureDirectory, sha, withLock,
 } from './lib.mjs';
+export { progressBlock } from './lib.mjs';
 
 export function gh(root, args) {
   const result = spawnSync('gh', args, { cwd: root, encoding: 'utf8', shell: false,
@@ -11,13 +12,6 @@ export function gh(root, args) {
     env: { ...process.env, GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0' } });
   ensure(result.status === 0 && !result.error, `GitHub 명령 실패: ${result.stderr || result.error?.message || '응답 없음'}`);
   return result.stdout.trim();
-}
-
-export function progressBlock(state) {
-  return ['<!-- frontend-workflow:begin -->', `기능: ${state.id}`, `기획서: ${state.plan}`,
-    ...STAGES.map((stage, index) => `- [${index < STAGES.indexOf(state.stage) || state.stage === 'done' ? 'x' : ' '}] ${stage}`),
-    `현재 단계: ${state.stage}`, ...(state.pullRequestUrl ? [`PR: ${state.pullRequestUrl}`] : []),
-    '<!-- frontend-workflow:end -->'].join('\n');
 }
 
 export function mergeProgress(body, block) {

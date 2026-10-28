@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   STATE_DIR, CONFIG, STAGES, ensure, fail, sha, now, readJson, inside, writeJson,
-  git, loadConfig, validateConfig, loadState, saveState, featureDirectory,
+  git, loadConfig, validateConfig, loadState, saveState, featureDirectory, progressBlock,
   fingerprint, planHash, configHash, approvalValid, assertPlan, evidenceFile,
   evidenceValid, validateReport, assertReady, assertCleanSource, withLock,
 } from './lib.mjs';
@@ -169,9 +169,7 @@ function main() {
   }
   if (command === 'issue-body') {
     const state = loadState(root);
-    return ['<!-- frontend-workflow:begin -->', `기능: ${state.id}`, `기획서: ${state.plan}`,
-      ...STAGES.map((stage, i) => `- [${i < STAGES.indexOf(state.stage) || state.stage === 'done' ? 'x' : ' '}] ${stage}`),
-      `현재 단계: ${state.stage}`, '<!-- frontend-workflow:end -->'].join('\n');
+    return progressBlock(state);
   }
   return withLock(root, () => {
     if (command === 'init') {

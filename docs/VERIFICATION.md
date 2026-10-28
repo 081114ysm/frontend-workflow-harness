@@ -30,6 +30,8 @@ Node 내장 test runner만 사용한다. 임시 디렉터리에서 테스트용 
 
 당일 Node.js 24.16.0에서 `npm run verify`의 47개 테스트, 상대 링크 44개·JSON 9개·JS 구문 10개 검사가 통과했다. skill-creator의 `quick_validate.py`도 통과했다. GitHub helper의 원격 결과는 합성 전송기로 검증했으며 실제 저장소의 PR·CI·CodeRabbit 리뷰 성공을 뜻하지 않는다.
 
+2026-10-29에는 로컬 진행 본문과 GitHub 동기화 본문의 일치·PR URL 포함을 확인하는 회귀 검사를 추가한 뒤 48개 테스트가 통과했다. 기본 브랜치의 기준 커밋 `0e415db4b140cd5a42206b0916903a9ae3c86d90`은 [GitHub CI](https://github.com/081114ysm/frontend-workflow-harness/actions/runs/40701661621)도 통과했다.
+
 ## 검증하지 않은 것
 
 소비 앱이 아직 연결되지 않아 실제 React/Vue/Next UI, 브라우저 조작, 실제 API, Figma 일치, 실제 GitHub CI·머지, 전체 WCAG 준수, 성능 수치, Windows native 실행은 검증 범위 밖이다. 소비 앱을 적용할 때 해당 앱의 검증을 별도로 남겨야 한다.

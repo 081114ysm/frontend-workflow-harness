@@ -14,6 +14,13 @@ export const now = () => new Date().toISOString();
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 export const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
 
+export function progressBlock(state) {
+  return ['<!-- frontend-workflow:begin -->', `기능: ${state.id}`, `기획서: ${state.plan}`,
+    ...STAGES.map((stage, index) => `- [${index < STAGES.indexOf(state.stage) || state.stage === 'done' ? 'x' : ' '}] ${stage}`),
+    `현재 단계: ${state.stage}`, ...(state.pullRequestUrl ? [`PR: ${state.pullRequestUrl}`] : []),
+    '<!-- frontend-workflow:end -->'].join('\n');
+}
+
 // Resolve existing ancestors too: a symlink must not escape the selected project.
 export function inside(root, relative) {
   ensure(nonempty(relative) && !path.isAbsolute(relative), `프로젝트 상대 경로가 필요함: ${relative}`);
