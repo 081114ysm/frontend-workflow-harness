@@ -29,7 +29,14 @@ Node.js 22 이상과 Git이 필요하다. npm dependency는 없다. GitHub 원�
 
 GitHub 모드의 준비물은 리모트가 있는 프로젝트, 인증된 GitHub connector 또는 `gh auth login`, 실제 저장소 접근 권한이다. 자동 봇 리뷰에는 해당 저장소에 연결한 CodeRabbit GitHub App이 추가로 필요하다. App 연결과 YAML 설정은 별개의 단계다.
 
-이 저장소에서 대상 프로젝트에 설치한다. 대상 경로는 실제 앱 경로로 바꾼다.
+비공개 배포 원본을 내려받으려면 저장소 접근 권한이 있는 GitHub 계정으로 인증한다.
+
+```sh
+gh repo clone 081114ysm/frontend-workflow-harness
+cd frontend-workflow-harness
+```
+
+내려받은 하네스 폴더에서 대상 프로젝트에 설치한다. 대상 경로는 실제 앱 경로로 바꾼다.
 
 ```sh
 node scripts/install.mjs --target /path/to/frontend-app
