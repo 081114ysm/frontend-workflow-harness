@@ -149,6 +149,11 @@ function advance(root, state, config, options) {
   return { stage: next, pullRequestUrl: state.pullRequestUrl || null };
 }
 
+/**
+ * CLI 인자를 해석하고 프로젝트 경로에 맞는 명령을 실행한다.
+ * 조회 명령은 파일을 변경하지 않으며 상태 변경 명령은 프로젝트 lock 안에서 실행한다.
+ * @returns {object|string} JSON으로 출력할 명령 결과 또는 이슈 본문 문자열
+ */
 function main() {
   const options = parse(process.argv.slice(2));
   const [command, argument] = options._;
