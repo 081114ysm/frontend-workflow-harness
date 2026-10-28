@@ -1,0 +1,15 @@
+{
+  "url": "http://localhost:3000/실제-경로",
+  "browser": "실제 브라우저와 버전",
+  "apiMode": "mock",
+  "viewports": [320, 768, 1280],
+  "checks": {
+    "journey": { "status": "blocked", "detail": "AC ID, 사전 조건, 실제 클릭·입력과 화면 결과" },
+    "states": { "status": "blocked", "detail": "기획서의 적용 대상 상태별 실제 결과. 로딩·빈 상태·오류·복구 포함" },
+    "responsive": { "status": "blocked", "detail": "각 뷰포트, 가로 넘침, 긴 한국어, 200% 확대 결과" },
+    "keyboard": { "status": "blocked", "detail": "Tab/Shift+Tab/Enter/Space/Escape, 초점 이동·복귀와 IME 결과" },
+    "console": { "status": "blocked", "detail": "새 오류·경고, hydration 오류, 기존 오류와의 구분" },
+    "network": { "status": "blocked", "detail": "요청 URL/메서드/상태, 중복·재시도·응답 역전, Mock/실제 구분" }
+  },
+  "artifacts": []
+}

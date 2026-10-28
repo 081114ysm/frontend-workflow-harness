@@ -1,0 +1,15 @@
+{
+  "name": "frontend-workflow-harness",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "기능 단위 프론트엔드 개발 규칙과 증거 기반 진행 도구",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "node scripts/check-repository.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "verify": "npm run check && npm test",
+    "harness": "node scripts/harness.mjs"
+  },
+  "license": "MIT"
+}

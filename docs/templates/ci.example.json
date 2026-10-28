@@ -1,0 +1,5 @@
+{
+  "status": "pending",
+  "headSha": "실제로 검사한 PR head의 40자리 커밋",
+  "runUrl": "실제 CI 실행 URL"
+}

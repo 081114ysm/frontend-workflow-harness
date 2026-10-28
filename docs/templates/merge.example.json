@@ -1,0 +1,7 @@
+{
+  "merged": false,
+  "pullRequestUrl": "실제 PR URL",
+  "targetBranch": "실제 통합 브랜치",
+  "mergeCommit": "실제 merge/squash 커밋 40자리 SHA",
+  "mergedAt": "실제 머지 시각 ISO 8601"
+}

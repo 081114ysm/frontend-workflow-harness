@@ -1,0 +1,12 @@
+{
+  "method": "self",
+  "reviewer": "실제 리뷰어 또는 도구 이름",
+  "scope": "실제 diff 기준과 확인한 파일·계약을 작성",
+  "findings": [
+    {
+      "severity": "high",
+      "status": "open",
+      "detail": "예시 항목. 실제 리뷰 전에는 통과하지 않는다. 재현 조건, 영향, file:line, 수정 방법을 기록한다."
+    }
+  ]
+}

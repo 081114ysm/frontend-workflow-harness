@@ -1,0 +1,7 @@
+{
+  "provider": "coderabbitai",
+  "status": "pending",
+  "headSha": "실제 리뷰한 PR head의 40자리 SHA",
+  "reviewUrl": "현재 PR의 실제 CodeRabbit 결과 permalink",
+  "findings": []
+}

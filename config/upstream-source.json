@@ -1,0 +1,153 @@
+{
+  "repository": "https://github.com/4n5rud/focus-one-feature-backend",
+  "branch": "master",
+  "commit": "37426ee2d9935347b4a5f2b6bd1678e1a6e5a0e7",
+  "reviewedAt": "2026-10-28",
+  "files": [
+    {
+      "path": ".claude-plugin/marketplace.json",
+      "blobSha": "f58f3a6c5dd700d0350ddfdf9ca32f980559b12d",
+      "bytes": 1270
+    },
+    {
+      "path": ".claude-plugin/plugin.json",
+      "blobSha": "a21de12e169d1eee207b1e82ff80d8ce1657c00a",
+      "bytes": 399
+    },
+    {
+      "path": "CLAUDE.md",
+      "blobSha": "4f3a338b7f36e443bb4f81068ab5fd5c14266572",
+      "bytes": 3019
+    },
+    {
+      "path": "LICENSE",
+      "blobSha": "070a6f6eff1bbe1132576817cafde273f87483c4",
+      "bytes": 1063
+    },
+    {
+      "path": "README.en.md",
+      "blobSha": "da5354c7f1e528f8deea6b7fa68c945b103b932e",
+      "bytes": 15189
+    },
+    {
+      "path": "README.md",
+      "blobSha": "74568409a9b1cdce33cef1fed8c5d4f5e7e2a72d",
+      "bytes": 17118
+    },
+    {
+      "path": "SKILL.md",
+      "blobSha": "f86e8981c22920a4c630f68455749605c8bf987d",
+      "bytes": 3406
+    },
+    {
+      "path": "docs/adapters/api-client-collection.md",
+      "blobSha": "3deb23bb16c90d64820108c29f26011c369a50e7",
+      "bytes": 2840
+    },
+    {
+      "path": "docs/adapters/branch-strategy.md",
+      "blobSha": "ea3c9d3c9ab65856ea07600fed87ee602d079f9d",
+      "bytes": 3358
+    },
+    {
+      "path": "docs/adapters/code-style.md",
+      "blobSha": "95d15cb2485d05f5e3bbeb36a3d1a3f24ba26950",
+      "bytes": 2224
+    },
+    {
+      "path": "docs/adapters/external-doc-sync.md",
+      "blobSha": "6b5aac3ab8e297105d488068cc25afae615b903c",
+      "bytes": 3395
+    },
+    {
+      "path": "docs/adapters/migration-convention.md",
+      "blobSha": "936121500c5ad81f36c7471e9eecea98c39d5173",
+      "bytes": 3283
+    },
+    {
+      "path": "docs/adapters/review-bot.md",
+      "blobSha": "adbf7cde9b99e7745303cbd1fb6e772016cdf901",
+      "bytes": 1367
+    },
+    {
+      "path": "docs/adapters/test-convention.md",
+      "blobSha": "66460207482cb101ec168922ef24382d9987eb8b",
+      "bytes": 1424
+    },
+    {
+      "path": "docs/assets/README.md",
+      "blobSha": "145302ee4254a89fd349bf1574f6e25d4328eb2e",
+      "bytes": 818
+    },
+    {
+      "path": "docs/rules/api-design.md",
+      "blobSha": "81a779b287c80fe8bb384886a7b9e561a2d83381",
+      "bytes": 6080
+    },
+    {
+      "path": "docs/rules/branch-workflow.md",
+      "blobSha": "34181836a7bf4fc7615e8470452a740da0c79bd5",
+      "bytes": 12886
+    },
+    {
+      "path": "docs/rules/code-review-isolation.md",
+      "blobSha": "5d1f0a3ebb433419b08d00ab505f72dc5eaaa70d",
+      "bytes": 1957
+    },
+    {
+      "path": "docs/rules/code-review-template.md",
+      "blobSha": "c406fdf8a0642566737b71e8fdb102eeb86f5d6e",
+      "bytes": 3471
+    },
+    {
+      "path": "docs/rules/commit-convention.md",
+      "blobSha": "ba642fdb53e08442f71254c793f697db6b100548",
+      "bytes": 1207
+    },
+    {
+      "path": "docs/rules/issue-template.md",
+      "blobSha": "6bac5cc7ecdf265b51f3dd512cd5b069a4f01a6f",
+      "bytes": 1694
+    },
+    {
+      "path": "docs/rules/pr-template.md",
+      "blobSha": "64c6211063060739e3b71bb3653bf939691fd416",
+      "bytes": 1697
+    },
+    {
+      "path": "docs/rules/progress-tracking.md",
+      "blobSha": "5d1d6a44fcc0a0695e34c50287c84234480cdcb2",
+      "bytes": 3190
+    },
+    {
+      "path": "docs/rules/project-setup.md",
+      "blobSha": "6485ba928e5ee4d504b137257c3b57bbd4cc2f24",
+      "bytes": 4342
+    },
+    {
+      "path": "docs/rules/sentence-refinement.md",
+      "blobSha": "5db864e1dd91e9e81685fdc9bca96ce1aab1938b",
+      "bytes": 11289
+    },
+    {
+      "path": "docs/skills/README.md",
+      "blobSha": "726a13f694255e784376ee43b0f9c64f7bf7d5a8",
+      "bytes": 92
+    },
+    {
+      "path": "docs/templates/issue-bug.md",
+      "blobSha": "f4fd6c8656abab7ecba5af3ceae89b8179593279",
+      "bytes": 177
+    },
+    {
+      "path": "docs/templates/issue-feature.md",
+      "blobSha": "0c45ef96a5448892eb350ef97aa2573e87b41e92",
+      "bytes": 250
+    },
+    {
+      "path": "docs/templates/pull-request.md",
+      "blobSha": "d62a6945c54d394c66f5be49cbea382d34a3727f",
+      "bytes": 226
+    }
+  ]
+}

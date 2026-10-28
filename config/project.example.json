@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "project": "실제 프로젝트 이름으로 변경",
+  "configured": false,
+  "integrationBranch": "main",
+  "defaultBranch": "main",
+  "branchPrefix": "codex/",
+  "reviewMode": "self",
+  "requireLiveApi": false,
+  "requireCi": true,
+  "github": { "enabled": true, "repository": "소유자/저장소명" },
+  "codeRabbit": { "required": true },
+  "approval": { "plan": true, "pr": true },
+  "checks": {
+    "lint": { "argv": ["npm", "run", "lint"], "cwd": ".", "timeoutMs": 120000 },
+    "typecheck": { "argv": ["npm", "run", "typecheck"], "cwd": ".", "timeoutMs": 120000 },
+    "test": { "argv": ["npm", "run", "test", "--", "--run"], "cwd": ".", "timeoutMs": 120000 },
+    "build": { "argv": ["npm", "run", "build"], "cwd": ".", "timeoutMs": 180000 }
+  },
+  "notApplicable": {},
+  "context": {
+    "framework": "미설정",
+    "packageManager": "미설정",
+    "designSource": "미설정",
+    "apiSource": "미설정",
+    "supportedBrowsers": ["프로젝트에서 지원하는 브라우저와 버전 범위"],
+    "viewports": [320, 768, 1280]
+  }
+}

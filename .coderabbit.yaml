@@ -1,0 +1,76 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+{
+  "language": "ko-KR",
+  "tone_instructions": "한국어로 간결하게 작성한다. 지적에는 재현 조건, 실제 영향, 코드 위치와 수정 방법을 제시한다. 근거 없는 칭찬이나 추측을 확정적으로 표현하지 않는다.",
+  "reviews": {
+    "profile": "chill",
+    "high_level_summary": true,
+    "high_level_summary_in_walkthrough": true,
+    "sequence_diagrams": false,
+    "review_status": true,
+    "review_progress": true,
+    "commit_status": true,
+    "fail_commit_status": true,
+    "auto_review": {
+      "enabled": true,
+      "auto_incremental_review": true,
+      "auto_pause_after_reviewed_commits": 5,
+      "drafts": false,
+      "base_branches": []
+    },
+    "path_filters": [
+      "!**/node_modules/**",
+      "!**/dist/**",
+      "!**/.next/**",
+      "!**/coverage/**",
+      "!**/playwright-report/**",
+      "!**/test-results/**",
+      "!.frontend-workflow/**/*.log",
+      "!.frontend-workflow/state.json",
+      "!.frontend-workflow/features/**/state.json"
+    ],
+    "path_instructions": [
+      {
+        "path": "**/*.{ts,tsx,js,jsx,vue,svelte,mjs}",
+        "instructions": "버그, 요청 경합과 취소, 중복 제출, 인증 만료와 계정별 캐시 격리, XSS와 비밀값 노출, 접근성, 반응형, SSR·hydration 경계, 성능, 네이밍·중복·계층 책임과 유지보수성을 검토한다. 변경된 동작과 인접 호출부를 근거로 지적하고 범위 밖 리팩터링을 강요하지 않는다."
+      },
+      {
+        "path": "scripts/**",
+        "instructions": "사용자 입력의 shell 삽입, 상대 경로 탈출과 symlink, 기존 파일 보존, 비정상 종료와 동시 실행, 오래된 승인·검증 결과 재사용, 실제 원격 성공 확인과 재시도 중복 생성을 검토한다."
+      },
+      {
+        "path": "docs/**",
+        "instructions": "규칙과 실제 CLI·템플릿의 불일치, 순서상 교착, 끊어진 링크, 확인하지 않은 원본·성과·검증 완료 주장, Mock과 실제 연동 또는 자체와 독립 리뷰의 혼동을 확인한다."
+      },
+      {
+        "path": ".github/workflows/**",
+        "instructions": "최소 권한, fork PR의 secret 접근, 신뢰하지 않는 PR 코드의 권한 있는 실행, 실제 Node·패키지 매니저와 검사 명령의 일치를 확인한다."
+      }
+    ],
+    "finishing_touches": {
+      "docstrings": {
+        "enabled": false
+      },
+      "unit_tests": {
+        "enabled": false
+      },
+      "simplify": {
+        "enabled": false
+      },
+      "autofix": {
+        "enabled": false
+      },
+      "fix_ci": {
+        "enabled": false
+      },
+      "resolve_merge_conflict": {
+        "enabled": false
+      }
+    }
+  },
+  "knowledge_base": {
+    "code_guidelines": {
+      "enabled": true
+    }
+  }
+}
