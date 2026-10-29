@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   STATE_DIR, CONFIG, STAGES, ensure, fail, sha, now, readJson, inside, writeJson,
-  git, loadConfig, validateConfig, loadState, saveState, featureDirectory,
+  git, loadConfig, validateConfig, loadState, saveState, featureDirectory, progressBlock,
   fingerprint, planHash, configHash, approvalValid, assertPlan, evidenceFile,
   evidenceValid, validateReport, assertReady, assertCleanSource, withLock,
 } from './lib.mjs';
@@ -149,6 +149,11 @@ function advance(root, state, config, options) {
   return { stage: next, pullRequestUrl: state.pullRequestUrl || null };
 }
 
+/**
+ * CLI 인자를 해석하고 프로젝트 경로에 맞는 명령을 실행한다.
+ * 조회 명령은 파일을 변경하지 않으며 상태 변경 명령은 프로젝트 lock 안에서 실행한다.
+ * @returns {object|string} JSON으로 출력할 명령 결과 또는 이슈 본문 문자열
+ */
 function main() {
   const options = parse(process.argv.slice(2));
   const [command, argument] = options._;
@@ -169,9 +174,7 @@ function main() {
   }
   if (command === 'issue-body') {
     const state = loadState(root);
-    return ['<!-- frontend-workflow:begin -->', `기능: ${state.id}`, `기획서: ${state.plan}`,
-      ...STAGES.map((stage, i) => `- [${i < STAGES.indexOf(state.stage) || state.stage === 'done' ? 'x' : ' '}] ${stage}`),
-      `현재 단계: ${state.stage}`, '<!-- frontend-workflow:end -->'].join('\n');
+    return progressBlock(state);
   }
   return withLock(root, () => {
     if (command === 'init') {

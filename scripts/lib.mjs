@@ -14,6 +14,19 @@ export const now = () => new Date().toISOString();
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 export const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
 
+/**
+ * 로컬 issue-body와 GitHub 동기화에서 공유하는 관리 블록을 만든다.
+ * 현재 단계 이전의 항목을 완료로 표시하고 연결된 PR이 있으면 URL을 포함한다.
+ * @param {object} state 저장된 기능 ID·기획서·진행 단계와 선택적 PR URL
+ * @returns {string} 사용자 이슈 본문과 구별할 시작·종료 마커가 있는 진행 블록
+ */
+export function progressBlock(state) {
+  return ['<!-- frontend-workflow:begin -->', `기능: ${state.id}`, `기획서: ${state.plan}`,
+    ...STAGES.map((stage, index) => `- [${index < STAGES.indexOf(state.stage) || state.stage === 'done' ? 'x' : ' '}] ${stage}`),
+    `현재 단계: ${state.stage}`, ...(state.pullRequestUrl ? [`PR: ${state.pullRequestUrl}`] : []),
+    '<!-- frontend-workflow:end -->'].join('\n');
+}
+
 // Resolve existing ancestors too: a symlink must not escape the selected project.
 export function inside(root, relative) {
   ensure(nonempty(relative) && !path.isAbsolute(relative), `프로젝트 상대 경로가 필요함: ${relative}`);

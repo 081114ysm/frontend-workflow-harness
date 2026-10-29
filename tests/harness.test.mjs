@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { BROWSER_CHECKS, fingerprint, inside, validateConfig } from '../scripts/lib.mjs';
+import { githubWorkflow } from '../scripts/github-lib.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(source, 'scripts/harness.mjs');
@@ -201,6 +202,24 @@ test('현재 HEAD와 다른 CI 결과를 거부한다', t => {
   const f = fixture(t); f.pr();
   f.write(f.evidence + 'ci.json', { status: 'pass', headSha: 'b'.repeat(40), runUrl: 'https://github.com/example/app/actions/runs/2' });
   f.bad(/현재 HEAD/, 'record', '--kind', 'ci', '--file', f.evidence + 'ci.json');
+});
+
+test('PR 단계의 로컬 진행 출력은 GitHub 동기화 블록과 같고 PR URL을 포함한다', t => {
+  const f = fixture(t, { github: { enabled: true, repository: 'example/app' } }); f.pr();
+  const output = f.ok('issue-body').trim();
+  let body = '## 사용자 목적\n보존할 본문\n';
+  let edits = 0;
+  const fake = args => {
+    if (args[1] === 'view') return JSON.stringify({ body, state: 'OPEN', updatedAt: 'same-time' });
+    if (args[1] === 'edit') { body = fs.readFileSync(args.at(-1), 'utf8'); edits++; return ''; }
+    assert.fail(args.join(' '));
+  };
+  assert.equal(githubWorkflow(f.root, 'issue-sync', {}, fake).synced, true);
+  assert.equal(edits, 1);
+  assert.match(body, /^## 사용자 목적\n보존할 본문/);
+  const remoteBlock = body.match(/<!-- frontend-workflow:begin -->[\s\S]*?<!-- frontend-workflow:end -->/)?.[0];
+  assert.equal(output, remoteBlock);
+  assert(output.includes(`PR: ${f.state().pullRequestUrl}`));
 });
 
 test('CodeRabbit 필수 모드에서는 실제 리뷰 기록 전 완료할 수 없다', t => {
