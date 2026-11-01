@@ -38,7 +38,7 @@ Node 내장 test runner만 사용한다. 임시 디렉터리에서 테스트용 
 
 같은 날 CodeRabbit GitHub App을 `081114ysm/frontend-workflow-harness` 하나에만 연결했다. [PR #1](https://github.com/081114ysm/frontend-workflow-harness/pull/1)의 커밋 `0cd9922638a7c7f4ebff24a83cb1ad441e0fd0dd`에서 Node.js 22·24의 [실제 CI](https://github.com/081114ysm/frontend-workflow-harness/actions/runs/40787074299)와 CodeRabbit 자동 리뷰가 완료됐다. 봇의 실제 리뷰는 [리뷰 기록](https://github.com/081114ysm/frontend-workflow-harness/pull/1#pullrequestreview-5691028200)에서 확인한다. 리뷰에서 나온 GitHub CLI 설치 안내 누락과 두 명령의 출력 비교 보완을 반영했다. 이 기록은 해당 하네스 PR의 검증이며 소비 앱 검증을 뜻하지 않는다.
 
-2026-11-02 QA Markdown 자동 저장을 추가한 뒤 `npm run verify`의 58개 테스트와 상대 링크 44개·JSON 9개·JS 구문 11개 검사가 통과했다. 기능 착수·검사·브라우저 기록·재기획과 문서 재생성 명령을 임시 Git 프로젝트에서 실행해 생성 내용과 게이트를 검증했다. QA 문서 갱신이 실패한 뒤에도 저장된 검사 결과와 수동 메모를 보존해 문서를 복구하는 경로를 확인했다. 합성 브라우저 보고서를 사용한 테스트이므로 실제 소비 앱의 브라우저 검증을 수행했다는 뜻은 아니다.
+2026-11-02 QA Markdown 자동 저장을 추가한 뒤 `npm run verify`의 59개 테스트와 상대 링크 44개·JSON 9개·JS 구문 11개 검사가 통과했다. 기능 착수·검사·브라우저 기록·재기획과 문서 재생성 명령을 임시 Git 프로젝트에서 실행해 생성 내용과 게이트를 검증했다. QA 문서 갱신이 실패한 뒤에도 저장된 검사 결과와 수동 메모를 보존해 문서를 복구하는 경로를 확인했다. CodeRabbit이 지적한 빈 파일·없는 보고서의 이전 브라우저 통과 재사용도 회귀 검사로 막았다. 합성 브라우저 보고서를 사용한 테스트이므로 실제 소비 앱의 브라우저 검증을 수행했다는 뜻은 아니다.
 
 ## 검증하지 않은 것
 

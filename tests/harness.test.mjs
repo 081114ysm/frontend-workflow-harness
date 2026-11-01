@@ -165,6 +165,20 @@ test('깨진 브라우저 JSON도 거부 기록을 남기며 이전 통과 기�
   assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
 });
 
+test('빈 파일과 없는 브라우저 보고서도 이전 통과를 무효화하고 QA 문서에 남긴다', t => {
+  const f = fixture(t); f.ready(); f.write(f.evidence + 'empty.json', '');
+  for (const [name, pattern] of [['empty.json', /비어 있지 않은/], ['missing.json', /ENOENT/]]) {
+    f.browser();
+    f.bad(pattern, 'record', '--kind', 'browser', '--file', f.evidence + name);
+    assert.equal(f.state().evidence.browser, undefined);
+    assert.deepEqual(f.state().qaFailures.browser.files, []);
+    assert.match(f.report(), /기록 상태: 기록 거부/);
+    assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
+  }
+  f.approve('pr'); f.git('add', '.'); f.git('commit', '-m', 'test: unreadable browser');
+  f.bad(/browser/, 'advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
+});
+
 test('QA 자동 영역의 손상과 외부 symlink는 원문을 보존하며 거부한다', t => {
   const f = fixture(t); f.start(); const qa = '.frontend-workflow/features/42-search/QA.md';
   const broken = '<!-- frontend-workflow:qa:begin -->\n형의 메모';

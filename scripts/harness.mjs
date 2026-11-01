@@ -121,17 +121,17 @@ function recordEvidence(root, state, config, options) {
   const allowed = { review: ['review', 'qa', 'ready', 'pr'], browser: ['qa', 'ready', 'pr'], ci: ['pr'], merge: ['pr'], coderabbit: ['pr'] };
   ensure(allowed[kind]?.includes(state.stage), `${kind}: 현재 단계에서 기록할 수 없음`);
   assertPlan(root, state, config);
-  const file = evidenceFile(root, state, options.file);
   if (['ci', 'merge', 'coderabbit'].includes(kind)) assertCleanSource(root);
-  let report; let extra;
+  let file; let report; let extra;
   try {
+    file = evidenceFile(root, state, options.file);
     report = readJson(inside(root, file.path));
     extra = validateReport(root, state, config, kind, report);
   } catch (error) {
     if (kind === 'browser') {
-      const reason = report === undefined ? '브라우저 보고서 JSON 형식 오류' : error.message;
+      const reason = error instanceof SyntaxError ? '브라우저 보고서 JSON 형식 오류' : error.message;
       state.qaFailures ||= {};
-      state.qaFailures.browser = { at: now(), error: reason, summary: report ?? null, files: [file] };
+      state.qaFailures.browser = { at: now(), error: reason, summary: report ?? null, files: file ? [file] : [] };
       delete state.evidence.browser;
       saveState(root, state, 'record-rejected', { kind });
       fail(reason);
