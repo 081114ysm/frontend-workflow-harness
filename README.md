@@ -92,6 +92,7 @@ node .agents/skills/frontend-workflow-harness/scripts/setup-github.mjs
 | `configure --from 파일` | 실제 설정의 형식과 실행 경로 검사·저장 |
 | `start --id 42-order-search --issue URL` | 현재 기능 브랜치에서 상태·계획·증거 틀 생성 |
 | `status` | 현재 단계와 승인·검사·증거의 유효성 표시 |
+| `qa-report` | 현재 기록과 증거 유효성으로 기능별 `QA.md` 재생성. 검증을 새로 실행하지 않음 |
 | `approve --gate plan --by 승인자 --file 근거.md` | 실제 사용자 지시를 현재 기획서·설정에 연결 |
 | `advance --to implement` | 조건을 확인하고 바로 다음 단계로 이동 |
 | `run all` 또는 `run test` | 설정한 실제 명령을 실행, 종료 코드·지문 기록 |
@@ -104,6 +105,20 @@ GitHub 작업은 `scripts/github.mjs`의 `check`, `issue-create`, `issue-sync`, 
 기능 브랜치는 `start` 전에 만든다. 실제 통합 브랜치를 기준으로 생성하고 기존 미커밋 변경을 보존한다. 기획서와 근거 파일은 `.frontend-workflow/features/{id}/`에 생성된다. 증거 경로는 이 기능의 `evidence/` 하위여야 한다.
 
 전체 명령 흐름은 [주문 검색 예제](examples/order-search.md), 상태 복구는 [진행 기록](docs/rules/progress.md)을 참고한다.
+
+## QA 문서 자동 저장
+
+기능을 시작하면 `.frontend-workflow/features/{id}/QA.md`가 미실행 상태로 생성된다. 이후 검사 실행·브라우저 결과 기록·단계 전환 등 상태가 저장될 때 같은 문서가 자동 갱신된다. 에이전트는 QA 검토를 요청할 때 이 파일을 보여준다.
+
+- 검사별 통과·실패·미실행·재검증 여부와 실행 시각·종료 정보.
+- 사용자 여정·화면 상태·반응형·키보드·콘솔·네트워크 결과.
+- 브라우저·URL·뷰포트, Mock/실제 API 구분과 증거 파일 링크.
+- 기록이 거부된 브라우저 보고서의 실패·차단 내용과 사유.
+- 리뷰·CI·CodeRabbit 결과, 남은 검증과 현재 QA 완료 조건.
+
+문서는 저장된 JSON과 실제 검사 결과에서 생성한다. 자동 관리 영역 밖의 수동 메모는 보존한다. 원시 stdout/stderr는 복사하지 않는다. 문서 생성은 브라우저를 실제로 검사했다는 뜻이 아니며, 에이전트가 실제 조작 결과를 기록해야 한다.
+
+파일을 직접 수정한 직후에는 이전 문서가 스냅샷으로 남아 있을 수 있다. `qa-report`로 현재 코드·기획·설정·증거를 다시 대조하면 오래된 결과를 **재검증 필요**로 표시한다. 이 명령만으로 실패가 통과로 바뀌지는 않는다. `status`는 계속 읽기 전용으로 동작한다.
 
 ## 구조와 읽는 순서
 

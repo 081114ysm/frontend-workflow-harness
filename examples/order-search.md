@@ -51,8 +51,11 @@ H advance --to qa
 ```sh
 H run all
 H record --kind browser --file .frontend-workflow/features/42-order-search/evidence/browser.json
+H qa-report
 H advance --to ready
 ```
+
+검사 실행·기록과 단계 변경에 따라 `.frontend-workflow/features/42-order-search/QA.md`가 자동 저장된다. 에이전트는 QA 보고 직전에 `H qa-report`로 증거의 최신성을 다시 확인하고 이 문서를 사용자에게 보여준다. 실행하지 않은 항목은 미실행으로 남기며, 자동 관리 영역 밖의 수동 메모는 유지한다.
 
 실제 PR 생성 지시를 `evidence/pr-authorization.md`로 기록한다. 제품 코드와 설정을 커밋하고 권한 범위에서 실제 PR을 생성한 뒤 반환된 URL을 사용한다. 아래 URL은 형식 예시다.
 

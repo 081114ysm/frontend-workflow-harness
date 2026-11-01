@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   STATE_DIR, CONFIG, STAGES, ensure, fail, sha, now, readJson, inside, writeJson,
-  git, loadConfig, validateConfig, loadState, saveState, featureDirectory, progressBlock,
+  git, loadConfig, validateConfig, loadState, saveState, featureDirectory, progressBlock, writeQaReport,
   fingerprint, planHash, configHash, approvalValid, assertPlan, evidenceFile,
   evidenceValid, validateReport, assertReady, assertCleanSource, withLock,
 } from './lib.mjs';
@@ -59,7 +59,7 @@ function newFeature(root, config, options) {
     fs.copyFileSync(path.join(bundle, `docs/templates/${kind}.example.json`), path.join(directory, 'evidence', `${kind}.json`));
   }
   saveState(root, state, 'start', { branch, baseSha });
-  return { id: state.id, stage: state.stage, plan: state.plan, next: '기획서를 실제 내용으로 작성하고 사용자 승인 근거를 evidence/에 기록' };
+  return { id: state.id, stage: state.stage, plan: state.plan, qaReport: `${featureDirectory(state)}/QA.md`, next: '기획서를 실제 내용으로 작성하고 사용자 승인 근거를 evidence/에 기록' };
 }
 
 function recordApproval(root, state, options) {
@@ -107,19 +107,42 @@ function runCheck(root, state, config, name) {
   return { ...record, log: `${featureDirectory(state)}/evidence/check-${name}.log` };
 }
 
+/**
+ * 보고서와 증거를 검증해 현재 코드에 연결한다.
+ * 거부된 브라우저 보고서는 QA 문서에 실패로 남기고 이전 통과 기록을 제거한다.
+ * @param {string} root 대상 프로젝트 루트
+ * @param {object} state 현재 기능 상태
+ * @param {object} config 프로젝트 설정
+ * @param {object} options 증거 종류와 보고서 파일 경로
+ * @returns {object} 성공적으로 기록한 증거 종류와 결과
+ */
 function recordEvidence(root, state, config, options) {
   const kind = options.kind;
   const allowed = { review: ['review', 'qa', 'ready', 'pr'], browser: ['qa', 'ready', 'pr'], ci: ['pr'], merge: ['pr'], coderabbit: ['pr'] };
   ensure(allowed[kind]?.includes(state.stage), `${kind}: 현재 단계에서 기록할 수 없음`);
   assertPlan(root, state, config);
   const file = evidenceFile(root, state, options.file);
-  const report = readJson(inside(root, file.path));
   if (['ci', 'merge', 'coderabbit'].includes(kind)) assertCleanSource(root);
-  const extra = validateReport(root, state, config, kind, report);
+  let report; let extra;
+  try {
+    report = readJson(inside(root, file.path));
+    extra = validateReport(root, state, config, kind, report);
+  } catch (error) {
+    if (kind === 'browser') {
+      const reason = report === undefined ? '브라우저 보고서 JSON 형식 오류' : error.message;
+      state.qaFailures ||= {};
+      state.qaFailures.browser = { at: now(), error: reason, summary: report ?? null, files: [file] };
+      delete state.evidence.browser;
+      saveState(root, state, 'record-rejected', { kind });
+      fail(reason);
+    }
+    throw error;
+  }
   state.evidence[kind] = {
     at: now(), fingerprint: fingerprint(root), planHash: planHash(root, state),
     configHash: configHash(root), files: [file, ...extra], summary: report,
   };
+  if (kind === 'browser' && state.qaFailures) delete state.qaFailures.browser;
   saveState(root, state, 'record', { kind });
   return { kind, recorded: true };
 }
@@ -160,7 +183,7 @@ function main() {
   const root = fs.realpathSync(path.resolve(options.root || process.cwd()));
   if (!command || command === 'help') return {
     usage: 'node scripts/harness.mjs [--root 프로젝트] 명령 [옵션]',
-    commands: ['doctor', 'init', 'configure --from 설정.json', 'start --id 42-auth-login --issue URL', 'status', 'approve --gate plan|pr --by 승인자 --file 증거경로', 'advance --to implement|review|qa|ready|pr|done [--url PR주소]', 'run 검사이름|all', 'record --kind review|browser|ci|merge|coderabbit --file 증거.json', 'replan --reason 변경이유', 'issue-body'],
+    commands: ['doctor', 'init', 'configure --from 설정.json', 'start --id 42-auth-login --issue URL', 'status', 'qa-report', 'approve --gate plan|pr --by 승인자 --file 증거경로', 'advance --to implement|review|qa|ready|pr|done [--url PR주소]', 'run 검사이름|all', 'record --kind review|browser|ci|merge|coderabbit --file 증거.json', 'replan --reason 변경이유', 'issue-body'],
   };
   if (command === 'doctor') return doctor(root);
   if (command === 'status') {
@@ -194,12 +217,14 @@ function main() {
     if (command === 'start') return newFeature(root, config, options);
     const state = loadState(root);
     ensure(git(root, ['branch', '--show-current']) === state.branch, `작업 브랜치 불일치. ${state.branch}에서 재개할 것`);
+    if (command === 'qa-report') return { qaReport: writeQaReport(root, state), note: '저장된 사실을 현재 코드와 대조해 문서만 갱신함. 검증을 새로 실행하지 않음.' };
     if (command === 'approve') return recordApproval(root, state, options);
     if (command === 'advance') return advance(root, state, config, options);
     if (command === 'record') return recordEvidence(root, state, config, options);
     if (command === 'replan') {
       ensure(options.reason?.trim() && state.stage !== 'done', '변경 이유 필요. 완료한 기능은 새 이슈로 처리');
       state.stage = 'plan'; state.approvals = {}; state.checks = {}; state.evidence = {};
+      delete state.qaFailures;
       saveState(root, state, 'replan', { reason: options.reason });
       return { stage: state.stage, next: '기획서 변경과 재승인. 기존 PR이 있다면 변경 범위를 PR에도 반영할 것.' };
     }

@@ -41,6 +41,7 @@ function fixture(t, override = {}) {
   const bad = (pattern, ...args) => { const r = run(...args); assert.notEqual(r.status, 0, r.stdout); assert.match(r.stderr, pattern); return r; };
   const state = () => JSON.parse(fs.readFileSync(path.join(root, '.frontend-workflow/state.json'), 'utf8'));
   const evidence = '.frontend-workflow/features/42-search/evidence/';
+  const report = () => fs.readFileSync(path.join(root, '.frontend-workflow/features/42-search/QA.md'), 'utf8');
   const start = () => ok('start', '--id', '42-search', '--issue', 'https://github.com/example/app/issues/42');
   const approve = (gate = 'plan') => {
     // Synthetic test authorization only: this fixture is never reported as real user approval.
@@ -68,8 +69,125 @@ function fixture(t, override = {}) {
     ready(); approve('pr'); git('add', '.'); git('commit', '-m', 'test: feature');
     ok('advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
   };
-  return { root, git, write, config, run, ok, bad, state, evidence, start, approve, implement, review, browser, qa, ready, pr };
+  return { root, git, write, config, run, ok, bad, state, evidence, report, start, approve, implement, review, browser, qa, ready, pr };
 }
+
+test('착수 시 QA.md를 미실행 상태로 만들며 예시 JSON을 검증 결과로 사용하지 않는다', t => {
+  const f = fixture(t); const original = fingerprint(f.root); f.start();
+  assert.equal(fingerprint(f.root), original);
+  assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
+  assert.match(f.report(), /\| 사용자 여정 \| 미실행 \|/);
+  assert.match(f.report(), /시작 시 복사한 JSON 예시는 실행 결과가 아님/);
+  assert.match(f.ok('issue-body'), /QA: \.frontend-workflow\/features\/42-search\/QA.md/);
+});
+
+test('검사 실패를 QA 문서에 자동 저장하며 원시 출력을 복사하지 않는다', t => {
+  const f = fixture(t, { checks: { test: { argv: [process.execPath, '-e', 'console.error(process.env.HARNESS_QA_RAW_OUTPUT); process.exit(7)'], cwd: '.', timeoutMs: 1000 } } });
+  f.implement();
+  const result = spawnSync(process.execPath, [cli, '--root', f.root, 'run', 'all'], { encoding: 'utf8', env: { ...process.env, HARNESS_QA_RAW_OUTPUT: 'PRIVATE_RAW_OUTPUT_SENTINEL' } });
+  assert.equal(result.status, 1); assert.match(f.report(), /\| test \| 실패 \|/);
+  assert.match(f.report(), /종료 코드: 7/); assert(!f.report().includes('PRIVATE_RAW_OUTPUT_SENTINEL'));
+  assert.match(f.report(), /\[evidence\/check-test.json\]\(evidence\/check-test.json\)/);
+});
+
+test('자동 QA 문서는 기록한 브라우저 환경과 증거를 포함하고 현재 완료 조건을 계산한다', t => {
+  const f = fixture(t); f.ready();
+  assert.match(f.report(), /QA 완료 조건: \*\*충족\*\*/);
+  assert.match(f.report(), /API 모드: mock/); assert.match(f.report(), /320, 768, 1280/);
+  assert.match(f.report(), /\| 사용자 여정 \| 통과 \| Synthetic fixture result \|/);
+  assert.match(f.report(), /\[evidence\/synthetic-browser.txt\]\(evidence\/synthetic-browser.txt\)/);
+  assert.match(f.report(), /실제 서버·쿠키·CORS·인증 연동은 별도 검증/);
+});
+
+test('이전 통과 뒤 다른 파일의 실패·차단 브라우저 보고서를 기록하면 QA 문서와 게이트에 반영한다', t => {
+  const f = fixture(t); f.ready();
+  const browser = JSON.parse(fs.readFileSync(path.join(f.root, f.evidence, 'browser.json'), 'utf8'));
+  browser.checks.journey = { status: 'fail', detail: 'AC-1: 검색 버튼을 눌러도 결과가 갱신되지 않음' };
+  browser.checks.network = { status: 'blocked', detail: '실제 서버 접근 불가' };
+  f.write(f.evidence + 'failed-browser.json', browser);
+  f.bad(/journey/, 'record', '--kind', 'browser', '--file', f.evidence + 'failed-browser.json');
+  assert.equal(f.state().evidence.browser, undefined);
+  assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
+  assert.match(f.report(), /\| 사용자 여정 \| 실패 \| AC-1:/);
+  assert.match(f.report(), /\| 네트워크 \| 차단 \| 실제 서버 접근 불가 \|/);
+  assert.match(f.report(), /기록 거부/);
+  f.approve('pr'); f.git('add', '.'); f.git('commit', '-m', 'test: rejected browser');
+  f.bad(/browser/, 'advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
+  f.browser(); assert.equal(f.state().qaFailures.browser, undefined);
+  assert.match(f.report(), /QA 완료 조건: \*\*충족\*\*/);
+});
+
+test('QA 문서 재생성은 코드·증거 변경의 만료를 표시하고 수동 메모와 원래 기록을 보존한다', t => {
+  const f = fixture(t); f.ready();
+  const qa = '.frontend-workflow/features/42-search/QA.md';
+  f.write(qa, f.report() + '형의 수동 메모: 모바일 확인 필요\n');
+  const before = fingerprint(f.root); const recorded = f.state().evidence.browser.at;
+  f.ok('qa-report'); assert.equal(fingerprint(f.root), before);
+  assert.match(f.report(), /형의 수동 메모: 모바일 확인 필요/);
+  f.write('app.js', 'export const value = 2;\n'); f.ok('qa-report');
+  assert.match(f.report(), /\| test \| 재검증 필요 \|/);
+  assert.match(f.report(), /기록 상태: 재검증 필요/);
+  assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
+  assert.equal(f.state().evidence.browser.at, recorded);
+  f.write('app.js', 'export const value = 1;\n');
+  f.write(f.evidence + 'synthetic-browser.txt', 'changed artifact'); f.ok('qa-report');
+  assert.match(f.report(), /기록 상태: 재검증 필요/);
+  f.ok('replan', '--reason', 'acceptance changed');
+  assert.match(f.report(), /\| 사용자 여정 \| 미실행 \|/);
+  assert.match(f.report(), /형의 수동 메모: 모바일 확인 필요/);
+});
+
+test('QA 문서는 보고서 안의 Markdown·HTML을 실행 가능한 링크나 표 구조로 해석하지 않는다', t => {
+  const f = fixture(t); f.qa(); f.ok('run', 'all');
+  const checks = Object.fromEntries(BROWSER_CHECKS.map(name => [name, { status: 'pass', detail: '값 | ![tracking](https://example.invalid/pixel)\n<script>bad</script>' }]));
+  f.browser({ checks });
+  assert(!f.report().includes('![tracking]')); assert(!f.report().includes('<script>'));
+  assert.match(f.report(), /&lt;script&gt;/);
+});
+
+test('기존 QA 메모의 원문을 보존하며 공백·괄호가 있는 증거 링크도 생성한다', t => {
+  const f = fixture(t); f.qa();
+  const qa = '.frontend-workflow/features/42-search/QA.md';
+  const manual = '## 기존 메모\n줄바꿈 유지  \n형이 추가한 내용\n';
+  f.write(qa, manual);
+  const artifact = f.evidence + '화면 (모바일).txt'; f.write(artifact, 'Synthetic artifact; no browser used.');
+  f.browser({ artifacts: [artifact] }); f.ok('qa-report');
+  assert(f.report().startsWith(manual));
+  assert.equal(f.report().split('<!-- frontend-workflow:qa:begin -->').length - 1, 1);
+  assert(f.report().includes('evidence/%ED%99%94%EB%A9%B4%20%28%EB%AA%A8%EB%B0%94%EC%9D%BC%29.txt'));
+});
+
+test('깨진 브라우저 JSON도 거부 기록을 남기며 이전 통과 기록을 재사용하지 않는다', t => {
+  const f = fixture(t); f.ready(); f.write(f.evidence + 'broken.json', '{ invalid json');
+  f.bad(/JSON 형식 오류/, 'record', '--kind', 'browser', '--file', f.evidence + 'broken.json');
+  assert.equal(f.state().evidence.browser, undefined);
+  assert.match(f.report(), /거부 이유: 브라우저 보고서 JSON 형식 오류/);
+  assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
+});
+
+test('QA 자동 영역의 손상과 외부 symlink는 원문을 보존하며 거부한다', t => {
+  const f = fixture(t); f.start(); const qa = '.frontend-workflow/features/42-search/QA.md';
+  const broken = '<!-- frontend-workflow:qa:begin -->\n형의 메모';
+  f.write(qa, broken); f.bad(/마커/, 'qa-report'); assert.equal(f.report(), broken);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'frontend-qa-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  const target = path.join(outside, 'report.md'); fs.writeFileSync(target, 'preserve');
+  fs.rmSync(path.join(f.root, qa)); fs.symlinkSync(target, path.join(f.root, qa));
+  f.bad(/심볼릭 링크/, 'qa-report'); assert.equal(fs.readFileSync(target, 'utf8'), 'preserve');
+});
+
+test('자동 QA 갱신 실패를 명시하고 저장된 검사 결과를 문서 복구에 재사용한다', t => {
+  const f = fixture(t); f.implement();
+  const qa = '.frontend-workflow/features/42-search/QA.md';
+  const manual = '<!-- frontend-workflow:qa:begin -->\n형의 메모'; f.write(qa, manual);
+  f.bad(/상태는 저장됐지만 QA.md 갱신 실패/, 'run', 'all');
+  assert.equal(f.state().checks.test.passed, true); assert.equal(f.report(), manual);
+  const recordedAt = f.state().checks.test.at;
+  f.write(qa, '형의 메모\n'); f.ok('qa-report');
+  assert.match(f.report(), /\| test \| 통과 \|/);
+  assert.equal(f.state().checks.test.at, recordedAt);
+  assert(f.report().startsWith('형의 메모\n'));
+});
 
 test('기획 승인 없이는 구현할 수 없다', t => {
   const f = fixture(t); f.start(); f.bad(/승인/, 'advance', '--to', 'implement');

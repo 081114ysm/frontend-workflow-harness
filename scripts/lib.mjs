@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { renderQaReport, mergeQaReport } from './qa-report.mjs';
 
 export const STATE_DIR = '.frontend-workflow';
 export const CONFIG = 'frontend-harness.config.json';
@@ -22,6 +23,7 @@ export const nonempty = (value) => typeof value === 'string' && value.trim().len
  */
 export function progressBlock(state) {
   return ['<!-- frontend-workflow:begin -->', `기능: ${state.id}`, `기획서: ${state.plan}`,
+    `QA: ${featureDirectory(state)}/QA.md`,
     ...STAGES.map((stage, index) => `- [${index < STAGES.indexOf(state.stage) || state.stage === 'done' ? 'x' : ' '}] ${stage}`),
     `현재 단계: ${state.stage}`, ...(state.pullRequestUrl ? [`PR: ${state.pullRequestUrl}`] : []),
     '<!-- frontend-workflow:end -->'].join('\n');
@@ -122,12 +124,48 @@ export function loadState(root) {
   return state;
 }
 
+/**
+ * 기능 이력과 활성 상태를 먼저 저장한 뒤 파생 QA 문서를 갱신한다.
+ * 문서 생성 실패 시 저장된 사실은 유지하고 명시적인 복구 오류를 반환한다.
+ * @param {string} root 대상 프로젝트 루트
+ * @param {object} state 변경한 기능 상태
+ * @param {string} action 기록할 작업명
+ * @param {object} detail 이력에 추가할 작업 정보
+ */
 export function saveState(root, state, action, detail = {}) {
   state.updatedAt = now();
   state.history.push({ at: state.updatedAt, action, stage: state.stage, ...detail });
   // Archive and active pointer contain the same data; recover from the archive after a crash.
   writeJson(inside(root, `${featureDirectory(state)}/state.json`), state);
   writeJson(inside(root, `${STATE_DIR}/state.json`), state);
+  try { writeQaReport(root, state); } catch (error) {
+    fail(`상태는 저장됐지만 QA.md 갱신 실패: ${error.message}. 원인을 해결한 뒤 qa-report로 다시 생성할 것`);
+  }
+}
+
+/**
+ * 현재 증거의 유효성을 재계산해 기능별 QA.md를 원자적으로 갱신한다.
+ * @param {string} root 대상 프로젝트 루트
+ * @param {object} state 저장된 기능 상태
+ * @returns {string} 생성된 문서의 프로젝트 상대 경로
+ */
+export function writeQaReport(root, state) {
+  const config = loadConfig(root);
+  const relative = `${featureDirectory(state)}/QA.md`;
+  const full = inside(root, relative);
+  ensure(!fs.lstatSync(full, { throwIfNoEntry: false })?.isSymbolicLink(), 'QA.md 심볼릭 링크는 덮어쓸 수 없음');
+  const validity = {
+    plan: !config.approval.plan || approvalValid(root, state, 'plan'),
+    checks: Object.fromEntries(Object.entries(state.checks).map(([name, record]) => [name, evidenceValid(root, state, record)])),
+    evidence: Object.fromEntries(Object.entries(state.evidence).map(([kind, record]) => [kind, evidenceValid(root, state, record)])),
+  };
+  const block = renderQaReport({ state, config, validity, headSha: git(root, ['rev-parse', 'HEAD']),
+    sourceFingerprint: fingerprint(root), generatedAt: now() });
+  const content = mergeQaReport(fs.existsSync(full) ? fs.readFileSync(full, 'utf8') : '', block);
+  const temporary = `${full}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, content, { flag: 'wx' });
+  fs.renameSync(temporary, full);
+  return relative;
 }
 
 export function approvalValid(root, state, gate) {
