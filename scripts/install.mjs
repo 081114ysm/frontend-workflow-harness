@@ -18,7 +18,7 @@ try {
   ensure(!fs.existsSync(staging), '설치 임시 경로 충돌');
   fs.mkdirSync(staging, { recursive: true });
   try {
-    for (const entry of ['SKILL.md', 'README.md', 'docs', 'config', 'scripts', 'tests', 'examples', '.github', '.coderabbit.yaml', 'package.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+    for (const entry of ['SKILL.md', 'README.md', 'docs', 'config', 'scripts', 'tests', 'examples', '.github', '.coderabbit.yaml', 'package.json', 'LICENSE']) {
       fs.cpSync(path.join(source, entry), path.join(staging, entry), { recursive: true, errorOnExist: true, force: false });
     }
     fs.mkdirSync(path.dirname(target), { recursive: true });

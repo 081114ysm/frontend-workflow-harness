@@ -2,8 +2,6 @@
 
 프론트엔드 기능 하나를 기획하고, 승인 범위 안에서 구현한 뒤 실제 화면과 API 동작을 검증해 전달하는 하네스다. 규칙 문서·프로젝트별 어댑터·템플릿과 Node CLI를 함께 제공한다. 앱이나 UI 라이브러리는 포함하지 않는다.
 
-[focus-one-feature-backend](https://github.com/4n5rud/focus-one-feature-backend)의 README 2개와 `docs/` 22개를 포함한 텍스트 파일 29개를 모두 검토했다. 기준 커밋은 `37426ee2d9935347b4a5f2b6bd1678e1a6e5a0e7`이다. [검토·변환 기록](docs/UPSTREAM_REVIEW.md)과 [파일별 SHA](config/upstream-source.json)에 확인 범위를 남겼다.
-
 ## 무엇을 해결하나
 
 - 기능 하나를 기준으로 범위·기획·구현·리뷰·QA·PR을 연결한다.
@@ -128,7 +126,7 @@ AGENTS.md / CLAUDE.md        이 배포 원본을 수정할 때의 지시
 docs/rules/                 워크플로우·프론트 계약·리뷰·검증·GitHub·복구
 docs/adapters/              스택·디자인·API/Mock·브라우저·선택 서비스
 docs/templates/             계획·이슈·PR·검증 JSON
-config/                     실제 앱 설정 예시와 검토한 원본 목록
+config/                     프로젝트 설정과 도구 설정
 scripts/                    CLI·설치·저장소 검증, 외부 dependency 없음
 tests/                      임시 Git 저장소에서 실패 경로·전체 사이클 검증
 examples/                   실제 적용 절차와 인수 조건 예시
@@ -152,4 +150,4 @@ CLI는 직접 코드 수정을 막는 보안 장치가 아니다. 승인 문구�
 
 CI와 머지가 없는 로컬 작업은 ready까지 전달할 수 있다. `done`은 필수 CI·CodeRabbit 리뷰와 실제 통합 브랜치 머지를 확인한 상태다. PR 생성 권한으로 머지·배포 권한을 추론하지 않는다.
 
-[MIT License](LICENSE) · [출처와 재사용 범위](THIRD_PARTY_NOTICES.md)
+[MIT License](LICENSE)
