@@ -2,8 +2,6 @@
 
 프론트엔드 기능 하나를 기획하고, 승인 범위 안에서 구현한 뒤 실제 화면과 API 동작을 검증해 전달하는 하네스다. 규칙 문서·프로젝트별 어댑터·템플릿과 Node CLI를 함께 제공한다. 앱이나 UI 라이브러리는 포함하지 않는다.
 
-[focus-one-feature-backend](https://github.com/4n5rud/focus-one-feature-backend)의 README 2개와 `docs/` 22개를 포함한 텍스트 파일 29개를 모두 검토했다. 기준 커밋은 `37426ee2d9935347b4a5f2b6bd1678e1a6e5a0e7`이다. [검토·변환 기록](docs/UPSTREAM_REVIEW.md)과 [파일별 SHA](config/upstream-source.json)에 확인 범위를 남겼다.
-
 ## 무엇을 해결하나
 
 - 기능 하나를 기준으로 범위·기획·구현·리뷰·QA·PR을 연결한다.
@@ -92,6 +90,7 @@ node .agents/skills/frontend-workflow-harness/scripts/setup-github.mjs
 | `configure --from 파일` | 실제 설정의 형식과 실행 경로 검사·저장 |
 | `start --id 42-order-search --issue URL` | 현재 기능 브랜치에서 상태·계획·증거 틀 생성 |
 | `status` | 현재 단계와 승인·검사·증거의 유효성 표시 |
+| `qa-report` | 현재 기록과 증거 유효성으로 기능별 `QA.md` 재생성. 검증을 새로 실행하지 않음 |
 | `approve --gate plan --by 승인자 --file 근거.md` | 실제 사용자 지시를 현재 기획서·설정에 연결 |
 | `advance --to implement` | 조건을 확인하고 바로 다음 단계로 이동 |
 | `run all` 또는 `run test` | 설정한 실제 명령을 실행, 종료 코드·지문 기록 |
@@ -105,6 +104,20 @@ GitHub 작업은 `scripts/github.mjs`의 `check`, `issue-create`, `issue-sync`, 
 
 전체 명령 흐름은 [주문 검색 예제](examples/order-search.md), 상태 복구는 [진행 기록](docs/rules/progress.md)을 참고한다.
 
+## QA 문서 자동 저장
+
+기능을 시작하면 `.frontend-workflow/features/{id}/QA.md`가 미실행 상태로 생성된다. 이후 검사 실행·브라우저 결과 기록·단계 전환 등 상태가 저장될 때 같은 문서가 자동 갱신된다. 에이전트는 QA 검토를 요청할 때 이 파일을 보여준다.
+
+- 검사별 통과·실패·미실행·재검증 여부와 실행 시각·종료 정보.
+- 사용자 여정·화면 상태·반응형·키보드·콘솔·네트워크 결과.
+- 브라우저·URL·뷰포트, Mock/실제 API 구분과 증거 파일 링크.
+- 기록이 거부된 브라우저 보고서의 실패·차단 내용과 사유.
+- 리뷰·CI·CodeRabbit 결과, 남은 검증과 현재 QA 완료 조건.
+
+문서는 저장된 JSON과 실제 검사 결과에서 생성한다. 자동 관리 영역 밖의 수동 메모는 보존한다. 원시 stdout/stderr는 복사하지 않는다. 문서 생성은 브라우저를 실제로 검사했다는 뜻이 아니며, 에이전트가 실제 조작 결과를 기록해야 한다.
+
+파일을 직접 수정한 직후에는 이전 문서가 스냅샷으로 남아 있을 수 있다. `qa-report`로 현재 코드·기획·설정·증거를 다시 대조하면 오래된 결과를 **재검증 필요**로 표시한다. 이 명령만으로 실패가 통과로 바뀌지는 않는다. `status`는 계속 읽기 전용으로 동작한다.
+
 ## 구조와 읽는 순서
 
 ```text
@@ -113,7 +126,7 @@ AGENTS.md / CLAUDE.md        이 배포 원본을 수정할 때의 지시
 docs/rules/                 워크플로우·프론트 계약·리뷰·검증·GitHub·복구
 docs/adapters/              스택·디자인·API/Mock·브라우저·선택 서비스
 docs/templates/             계획·이슈·PR·검증 JSON
-config/                     실제 앱 설정 예시와 검토한 원본 목록
+config/                     프로젝트 설정과 도구 설정
 scripts/                    CLI·설치·저장소 검증, 외부 dependency 없음
 tests/                      임시 Git 저장소에서 실패 경로·전체 사이클 검증
 examples/                   실제 적용 절차와 인수 조건 예시
@@ -137,4 +150,4 @@ CLI는 직접 코드 수정을 막는 보안 장치가 아니다. 승인 문구�
 
 CI와 머지가 없는 로컬 작업은 ready까지 전달할 수 있다. `done`은 필수 CI·CodeRabbit 리뷰와 실제 통합 브랜치 머지를 확인한 상태다. PR 생성 권한으로 머지·배포 권한을 추론하지 않는다.
 
-[MIT License](LICENSE) · [출처와 재사용 범위](THIRD_PARTY_NOTICES.md)
+[MIT License](LICENSE)

@@ -18,8 +18,8 @@
 | 3 | 통합 브랜치에서 기능 브랜치 생성, start, 기획서·인수 조건·상태 작성 | 검토 가능한 기획서 링크 |
 | 4 | 현재 기획서에 대한 실제 승인 확인·기록 | **기획 승인 게이트**. 승인 전 기능 구현 금지 |
 | 5 | 승인 범위 구현, 의미 있는 테스트·커밋, 구현 계약 변경 분류 | 진행 중 중요한 발견과 변경 |
-| 6 | 자체 또는 실제 독립 리뷰, 결함 수정, 자동 검사·브라우저 QA | 리뷰 결과와 재현 가능한 QA 결과 |
-| 7 | diff·검증·미검증·API 모드·롤백을 정리하고 ready | **QA 확인·PR 승인 게이트**. 지적된 수정 반영 |
+| 6 | 자체 또는 실제 독립 리뷰, 결함 수정, 자동 검사·브라우저 QA, 기록 시 QA.md 자동 갱신 | 리뷰 결과와 기능별 QA.md·증거 링크 |
+| 7 | qa-report로 최신성을 대조하고 diff·미검증·API 모드·롤백을 정리한 뒤 ready | **QA 확인·PR 승인 게이트**. 최신 QA.md를 보여주고 지적된 수정 반영 |
 | 8 | 지시된 범위에서 push·PR 생성, 이슈 진행 동기화 | PR URL과 현재 CI·CodeRabbit 상태 |
 | 9 | 현재 head의 CI와 실제 CodeRabbit 리뷰 확인, 지적 분류·수정 | 해결한 지적, 수용한 위험, 재검증 결과 |
 | 10 | 머지 지시가 있을 때만 실제 머지·기록·이슈 종료 | 머지와 종료 확인. PR 전달만 요청됐다면 pr에 남김 |
@@ -38,7 +38,7 @@ G issue-create --key auth-login-20261028 --title 로그인 오류 복구 --body-
 이슈 번호 확인 → 기능 브랜치 → H start --id 42-auth-login --issue 실제URL
 기획서 작성 → 실제 승인 → H approve --gate plan ... → H advance --to implement
 구현 → H run all → H advance --to review → 실제 리뷰 기록
-H advance --to qa → 실제 브라우저 QA 기록 → H advance --to ready
+H advance --to qa → 실제 브라우저 QA 기록 → H qa-report → H advance --to ready
 QA 결과 보고 → 실제 PR 승인 → H approve --gate pr ...
 범위에 맞춰 커밋·push → G pr-create --title ... --body-file PR본문.md
 G pr-inspect → 실제 CI·CodeRabbit 결과 확인·기록 → 필요하면 수정·재검증
@@ -46,6 +46,8 @@ G pr-inspect → 실제 CI·CodeRabbit 결과 확인·기록 → 필요하면 �
 ```
 
 `G pr-create`는 준비 조건을 확인하고 실제 PR의 base/head를 검증한 뒤 상태를 pr로 바꾼다. Git push·머지는 자동 실행하지 않는다. 해당 작업을 승인받은 에이전트가 수행한다. 댓글 재리뷰 명령은 사용자가 봇 리뷰 요청까지 지시한 범위에서만 보낸다.
+
+에이전트는 QA 결과 보고에 `.frontend-workflow/features/{id}/QA.md` 링크를 포함한다. 자동 검사 실행 결과와 실제 브라우저 조작 후 기록한 내용을 구분한다. 실패·차단된 보고서도 문서에 남기되 통과로 처리하지 않는다. 사용자가 JSON이나 Markdown을 매번 직접 작성하도록 요구하지 않는다.
 
 ## 사용자에게 보이는 예
 
