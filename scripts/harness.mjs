@@ -131,7 +131,7 @@ function recordEvidence(root, state, config, options) {
     if (kind === 'browser') {
       const reason = error instanceof SyntaxError ? '브라우저 보고서 JSON 형식 오류' : error.message;
       state.qaFailures ||= {};
-      state.qaFailures.browser = { at: now(), error: reason, summary: report ?? null, files: file ? [file] : [] };
+      state.qaFailures.browser = { at: now(), error: reason, summary: report ?? null, files: file && report !== undefined ? [file] : [] };
       delete state.evidence.browser;
       saveState(root, state, 'record-rejected', { kind });
       fail(reason);

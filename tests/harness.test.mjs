@@ -161,6 +161,8 @@ test('깨진 브라우저 JSON도 거부 기록을 남기며 이전 통과 기�
   const f = fixture(t); f.ready(); f.write(f.evidence + 'broken.json', '{ invalid json');
   f.bad(/JSON 형식 오류/, 'record', '--kind', 'browser', '--file', f.evidence + 'broken.json');
   assert.equal(f.state().evidence.browser, undefined);
+  assert.deepEqual(f.state().qaFailures.browser.files, []);
+  assert(!f.report().includes('[evidence/broken.json]'));
   assert.match(f.report(), /거부 이유: 브라우저 보고서 JSON 형식 오류/);
   assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
 });
