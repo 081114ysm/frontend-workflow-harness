@@ -205,7 +205,8 @@ test('QA 자동 영역의 손상과 외부 symlink는 원문을 보존하며 거
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'frontend-qa-outside-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   const target = path.join(outside, 'report.md'); fs.writeFileSync(target, 'preserve');
-  fs.rmSync(path.join(f.root, qa)); fs.symlinkSync(target, path.join(f.root, qa));
+  fs.rmSync(path.join(f.root, qa));
+  fs.symlinkSync(process.platform === 'win32' ? outside : target, path.join(f.root, qa), process.platform === 'win32' ? 'junction' : 'file');
   f.bad(/심볼릭 링크/, 'qa-report'); assert.equal(fs.readFileSync(target, 'utf8'), 'preserve');
 });
 
@@ -281,6 +282,13 @@ test('run all은 첫 실패 뒤 다른 검사를 실행하지 않는다', t => {
     extra: { argv: [process.execPath, '-e', 'process.exit(0)'], cwd: '.', timeoutMs: 1000 },
   } });
   f.implement(); assert.equal(f.run('run', 'all').status, 1); assert.equal(f.state().checks.extra, undefined);
+});
+
+test('프로젝트의 npm 검사를 셸 해석 없이 실행한다', t => {
+  const f = fixture(t, { checks: { test: { argv: ['npm', 'run', 'check'], cwd: '.', timeoutMs: 15000 } } });
+  f.write('package.json', { scripts: { check: "node -e \"console.log('PROJECT_NPM_CHECK_OK')\"" } });
+  f.implement();
+  assert.match(f.ok('run', 'test'), /PROJECT_NPM_CHECK_OK/);
 });
 
 test('요약 검사는 로그를 펼치지 않고 실제 결과와 실패 로그 경로를 반환한다', t => {
@@ -509,15 +517,17 @@ test('재기획은 승인과 검증을 지우고 이력을 보존한다', t => {
 
 test('경로 탈출과 외부 심볼릭 링크를 거부한다', t => {
   const f = fixture(t); assert.throws(() => inside(f.root, '../outside'), /밖 경로/);
-  fs.symlinkSync(os.tmpdir(), path.join(f.root, 'escape'));
+  fs.symlinkSync(os.tmpdir(), path.join(f.root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => inside(f.root, 'escape/a.json'), /심볼릭 링크/);
 });
 
 test('evidence의 ..와 심볼릭 링크로 다른 파일을 승인 근거에 넣지 않는다', t => {
   const f = fixture(t); f.start();
   f.bad(/evidence/, 'approve', '--gate', 'plan', '--by', 'test', '--file', f.evidence + '../../../../app.js');
-  fs.symlinkSync(path.join(f.root, 'app.js'), path.join(f.root, f.evidence, 'linked.md'));
-  f.bad(/다른 디렉터리/, 'approve', '--gate', 'plan', '--by', 'test', '--file', f.evidence + 'linked.md');
+  const link = process.platform === 'win32' ? 'linked/app.js' : 'linked.md';
+  if (process.platform === 'win32') fs.symlinkSync(f.root, path.join(f.root, f.evidence, 'linked'), 'junction');
+  else fs.symlinkSync(path.join(f.root, 'app.js'), path.join(f.root, f.evidence, link), 'file');
+  f.bad(/다른 디렉터리/, 'approve', '--gate', 'plan', '--by', 'test', '--file', f.evidence + link);
 });
 
 test('원자적 lock이 동시 변경을 막는다', t => {
@@ -552,6 +562,21 @@ test('예시 설정과 미적용 사유 없는 설정을 활성화하지 않는�
   const f = fixture(t);
   assert.throws(() => validateConfig({ ...f.config, configured: false }), /configured/);
   assert.throws(() => validateConfig({ ...f.config, notApplicable: {} }), /lint/);
+});
+
+test('브라우저 초기화는 앱 URL과 패키지 관리자에 맞는 초안만 만들고 기존 파일을 보존한다', t => {
+  const f = fixture(t);
+  f.write('package.json', { packageManager: 'pnpm@10.0.0' });
+  const report = JSON.parse(f.ok('browser-init', '--url', 'http://localhost:5173/orders?q=open', '--engine', 'firefox'));
+  assert.equal(report.scenario, 'qa/browser.json');
+  assert.deepEqual(report.install, [['pnpm', 'add', '-D', 'playwright'], ['pnpm', 'exec', 'playwright', 'install', 'firefox']]);
+  const file = path.join(f.root, report.scenario);
+  const draft = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(draft.baseUrl, 'http://localhost:5173');
+  assert.equal(draft.performance.pages[0].path, '/orders?q=open');
+  assert.deepEqual(draft.cases, []);
+  f.bad(/EEXIST/, 'browser-init', '--url', 'http://localhost:5173');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), draft);
 });
 
 test('설치는 기존 앱 파일을 보존하고 설치 후 CLI가 독립 실행된다', t => {

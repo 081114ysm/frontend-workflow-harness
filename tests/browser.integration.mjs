@@ -6,35 +6,57 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { execFile, spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 import { runBrowser } from '../scripts/browser-runner.mjs';
 import { ACTIVE_STATE } from '../scripts/lib.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
+const require = createRequire(import.meta.url);
+const engine = process.env.HARNESS_TEST_BROWSER || 'chromium';
 const cli = path.join(root, 'scripts/harness.mjs');
 const load = { role: 'button', name: 'Load' };
+const filter = { label: 'Filter' };
 const result = { testId: 'result' };
 const html = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
-  '<main><h1>Orders</h1><button id="load">Load</button><button id="fixture">Fixture</button><output data-testid="result">Idle</output></main>' +
+  '<main><h1>Orders</h1><label>Filter <input></label><button id="load">Load</button><button id="fixture">Fixture</button><output data-testid="result">Idle</output></main>' +
   '<script>const out=document.querySelector("output");' +
   'document.querySelector("#load").onclick=async()=>{out.textContent=(await (await fetch("/api/orders?token=DO_NOT_RECORD")).json()).value};' +
   'document.querySelector("#fixture").onclick=async()=>{out.textContent=(await (await fetch("/api/fixture")).json()).value};</script>';
 
-async function serverFixture(t) {
-  let marked = true; let requests = 0; let writes = 0;
+async function serverFixture(t, mswClient) {
+  let marked = true; let redirectApi = false; let requests = 0; let writes = 0;
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost');
     if (url.pathname === '/api/write') { writes++; response.end('unexpected'); return; }
     if (url.pathname === '/api/orders') {
       requests++;
+      if (redirectApi) { response.writeHead(302, { location: '/api/write' }).end(); return; }
       response.setHeader('content-type', 'application/json');
       if (marked) response.setHeader('x-api-mode', 'live-v1');
       response.end('{"value":"Network response"}');
       return;
     }
     if (url.pathname === '/favicon.ico') { response.writeHead(204).end(); return; }
+    if (url.pathname === '/redirect-page') { response.writeHead(302, { location: '/' }).end(); return; }
+    if (mswClient && url.pathname === '/mockServiceWorker.js') {
+      response.setHeader('content-type', 'text/javascript');
+      response.end(fs.readFileSync(require.resolve('msw/mockServiceWorker.js')));
+      return;
+    }
+    if (mswClient && url.pathname === '/msw-client.js') {
+      response.setHeader('content-type', 'text/javascript');
+      response.end(mswClient);
+      return;
+    }
+    if (mswClient && ['/msw', '/msw-unmarked'].includes(url.pathname)) {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(html.replace('id="load"', 'id="load" disabled') + '<script type="module" src="/msw-client.js"></script>');
+      return;
+    }
     if (url.pathname === '/credentials') {
       response.setHeader('content-type', 'text/html; charset=utf-8');
       response.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">' +
@@ -56,29 +78,30 @@ async function serverFixture(t) {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
-  return { origin: 'http://127.0.0.1:' + server.address().port, unmark: () => { marked = false; }, requests: () => requests, writes: () => writes };
+  return { origin: 'http://127.0.0.1:' + server.address().port, unmark: () => { marked = false; },
+    redirectApi: () => { redirectApi = true; }, requests: () => requests, writes: () => writes };
 }
 
 function scenario(origin, value = 'Network response') {
-  return { schemaVersion: 1, baseUrl: origin, timeoutMs: 2500,
+  return { schemaVersion: 1, baseUrl: origin, engine, timeoutMs: 4500,
     cases: [
       { id: 'load-order', area: 'journey', steps: [{ action: 'goto', path: '/' }, { action: 'click', locator: load }, { action: 'text', locator: result, value }] },
-      { id: 'keyboard-load', area: 'keyboard', steps: [{ action: 'goto', path: '/' }, { action: 'press', key: 'Tab' }, { action: 'focus', locator: load }] },
+      { id: 'keyboard-filter', area: 'keyboard', steps: [{ action: 'goto', path: '/' }, { action: 'press', key: 'Tab' }, { action: 'focus', locator: filter }] },
       { id: 'idle', area: 'states', steps: [{ action: 'goto', path: '/' }, { action: 'text', locator: result, value: 'Idle' }] },
     ],
     api: { expect: 'live', rules: [{ id: 'orders', origin, pathPrefix: '/api/orders', source: 'live', proof: { name: 'x-api-mode', value: 'live-v1' }, required: true }] },
   };
 }
 
-test('실제 Chromium CLI: 화면 조작·뷰포트·네트워크·성능을 QA.md에 기록하고 미확인 응답은 실패시킨다', async t => {
+test('실제 ' + engine + ' CLI에서 화면 조작·네트워크·성능을 기록하고 미확인 응답을 거부한다', async t => {
   const server = await serverFixture(t);
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-real-browser-'));
   t.after(() => fs.rmSync(project, { recursive: true, force: true }));
   const save = (name, value) => fs.writeFileSync(path.join(project, name), typeof value === 'string' ? value : JSON.stringify(value, null, 2));
-  fs.symlinkSync(path.join(root, 'node_modules'), path.join(project, 'node_modules'), 'dir');
+  fs.symlinkSync(path.join(root, 'node_modules'), path.join(project, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   save('.gitignore', 'node_modules\n');
   save('package.json', { name: 'browser-fixture', private: true });
-  save('frontend-harness.config.json', { schemaVersion: 1, configured: true, project: 'Chromium fixture', integrationBranch: 'main', defaultBranch: 'main', branchPrefix: 'codex/',
+  save('frontend-harness.config.json', { schemaVersion: 1, configured: true, project: 'Browser fixture', integrationBranch: 'main', defaultBranch: 'main', branchPrefix: 'codex/',
     reviewMode: 'self', requireLiveApi: true, requireCi: false, approval: { plan: false, pr: false }, github: { enabled: false },
     checks: { test: { argv: [process.execPath, '-e', 'process.exit(0)'], cwd: '.', timeoutMs: 1000 } },
     notApplicable: { lint: 'fixture', typecheck: 'fixture', build: 'fixture' }, context: { viewports: [320, 1024] } });
@@ -120,10 +143,10 @@ test('실제 Chromium CLI: 화면 조작·뷰포트·네트워크·성능을 QA.
   assert.equal(state.qaFailures.browser.summary.apiMode, 'unknown');
   await assert.rejects(h('advance', '--to', 'delivered'), /browser/);
   assert.equal(server.requests(), 4);
-  console.log('Chromium live/unknown, widths 320/1024, TTFB samples: ' + automation.performance.pages[0].samples.map(sample => sample.ttfbMs.toFixed(2)).join(', ') + ' ms');
+  console.log(engine + ' live/unknown, widths 320/1024, TTFB samples: ' + automation.performance.pages[0].samples.map(sample => sample.ttfbMs.toFixed(2)).join(', ') + ' ms');
 });
 
-test('실제 Chromium에서 하네스 fixture는 서버 요청 없이 mock으로 분류되고 혼합 흐름도 분리한다', async t => {
+test('실제 ' + engine + '에서 하네스 fixture와 혼합 흐름을 분리한다', async t => {
   const server = await serverFixture(t);
   const input = scenario(server.origin, 'Mock response');
   const fixture = { path: '/api/orders', body: { value: 'Mock response' } };
@@ -143,16 +166,73 @@ test('실제 Chromium에서 하네스 fixture는 서버 요청 없이 mock으로
   assert.equal(server.requests(), 1);
 });
 
-test('운영 측정 정책은 실제 브라우저의 POST를 서버로 보내지 않고 측정을 실패로 남긴다', async t => {
+test('실제 ' + engine + '에서 응답 헤더 없는 API의 승인·직접 전달·리다이렉트 차단을 확인한다', async t => {
   const server = await serverFixture(t);
-  const report = await runBrowser({ root, widths: [800], mode: 'performance',
-    input: { schemaVersion: 1, baseUrl: server.origin, target: 'production', performance: { runs: 1, settleMs: 350, pages: [{ id: 'mutating-page', path: '/write-page' }] } } });
-  assert.equal(report.automation.performance?.passed, false, JSON.stringify(report));
-  assert.equal(report.automation.performance.pages[0].failed, 1);
+  server.unmark();
+  const env = 'FRONTEND_HARNESS_LIVE_UPSTREAMS';
+  const previous = process.env[env];
+  t.after(() => { if (previous === undefined) delete process.env[env]; else process.env[env] = previous; });
+  delete process.env[env];
+  const input = scenario(server.origin);
+  input.api.rules = [{ id: 'orders', origin: server.origin, pathPrefix: '/api/orders', source: 'live', verification: 'upstream', required: true }];
+  const rejected = await runBrowser({ root, input, widths: [320] });
+  assert.match(rejected.automation.error, /승인/);
+  assert.equal(server.requests(), 0);
+  process.env[env] = JSON.stringify([{ origin: server.origin, pathPrefix: '/api/orders' }]);
+  const report = await runBrowser({ root, input, widths: [320] });
+  assert.equal(report.apiMode, 'live', JSON.stringify(report));
+  assert.equal(report.checks.journey.status, 'pass');
+  assert.equal(report.automation.api.counts.live, 1);
+  assert.equal(server.requests(), 1);
+  server.redirectApi();
+  const redirected = await runBrowser({ root, input, widths: [320] });
+  assert.equal(redirected.apiMode, 'unknown');
+  assert.equal(redirected.checks.network.status, 'fail');
+  assert.equal(server.requests(), 2);
   assert.equal(server.writes(), 0);
 });
 
-test('실제 Chromium은 승인된 입력은 허용하고 다른 origin으로 이동한 뒤에는 비밀값을 전달하지 않는다', async t => {
+test('실제 MSW 서비스 워커의 표식 있는 응답만 mock으로 인정한다', { skip: engine !== 'chromium' }, async t => {
+  const bundled = await build({ stdin: { resolveDir: root, contents: `
+    import { setupWorker } from 'msw/browser';
+    import { http, HttpResponse } from 'msw';
+    const worker = setupWorker(http.get('/api/orders', () => HttpResponse.json({ value: 'MSW response' }, {
+      headers: location.pathname === '/msw' ? { 'x-qa-mock': 'msw' } : {},
+    })));
+    await worker.start({ quiet: true, onUnhandledRequest: 'bypass' });
+    document.getElementById('load').disabled = false;
+  ` }, platform: 'browser', format: 'esm', bundle: true, write: false });
+  const server = await serverFixture(t, bundled.outputFiles[0].contents);
+  const input = scenario(server.origin, 'MSW response');
+  input.serviceWorkers = 'msw';
+  input.api = { expect: 'mock', rules: [{ id: 'orders', pathPrefix: '/api/orders', source: 'mock',
+    mockProof: { name: 'x-qa-mock', value: 'msw' }, required: true }] };
+  input.cases[0].steps[0].path = '/msw';
+  const mock = await runBrowser({ root, input, widths: [320] });
+  assert.equal(mock.apiMode, 'mock', JSON.stringify(mock));
+  assert.equal(mock.checks.journey.status, 'pass');
+  assert.equal(mock.checks.network.status, 'pass');
+  assert.equal(server.requests(), 0);
+  input.cases[0].steps[0].path = '/msw-unmarked';
+  const unknown = await runBrowser({ root, input, widths: [320] });
+  assert.equal(unknown.apiMode, 'unknown');
+  assert.equal(unknown.checks.network.status, 'fail');
+  assert.equal(server.requests(), 0);
+});
+
+test('운영 측정 정책은 실제 브라우저의 POST를 서버로 보내지 않고 측정을 실패로 남긴다', async t => {
+  const server = await serverFixture(t);
+  const report = await runBrowser({ root, widths: [800], mode: 'performance',
+    input: { schemaVersion: 1, baseUrl: server.origin, engine, target: 'production', performance: { runs: 1, settleMs: 350,
+      pages: [{ id: 'mutating-page', path: '/write-page' }, { id: 'redirect-page', path: '/redirect-page' }] } } });
+  assert.equal(report.automation.performance?.passed, false, JSON.stringify(report));
+  assert.equal(report.automation.performance.pages[0].failed, 1);
+  assert.equal(report.automation.performance.pages[0].failures['network-policy'], 1);
+  assert.equal(report.automation.performance.pages[1].failures['unexpected-url'], 1);
+  assert.equal(server.writes(), 0);
+});
+
+test('실제 ' + engine + '에서 승인된 입력과 다른 origin에서의 차단을 확인한다', async t => {
   const trusted = await serverFixture(t);
   const other = await serverFixture(t);
   const secretName = 'HARNESS_TEST_QA_CREDENTIAL';
@@ -165,7 +245,7 @@ test('실제 Chromium은 승인된 입력은 허용하고 다른 origin으로 �
   const fill = { action: 'fill', env: secretName, locator };
   const entered = { action: 'text', locator: { selector: 'output' }, value: 'Entered' };
   const input = {
-    schemaVersion: 1, baseUrl: trusted.origin, timeoutMs: 2000, assetOrigins: [other.origin],
+    schemaVersion: 1, baseUrl: trusted.origin, engine, timeoutMs: 4500, assetOrigins: [other.origin],
     statesNotApplicable: '인증 입력 fixture',
     cases: [
       { id: 'credential', area: 'journey', steps: [{ action: 'goto', path: '/credentials' }, fill, entered] },

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseScenario, browserExecutionTimeout, authorizeBrowserCredentials, matchRule, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
+import { parseScenario, browserExecutionTimeout, authorizeBrowserCredentials, authorizeLiveUpstreams, matchRule, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
 import { measureBudget } from '../scripts/browser-runner.mjs';
 
 const proof = { name: 'x-api-mode', value: 'live-v1' };
@@ -72,4 +72,27 @@ test('브라우저 자격 증명은 실행자가 허용한 정확한 origin과 �
   assert.throws(() => authorizeBrowserCredentials({ ...config, storageStateEnv: 'OTHER_FILE' }, policy), /로그인 상태/);
   assert.throws(() => authorizeBrowserCredentials({ ...config, origins: new Set([origin, 'https://elsewhere.example.invalid']) }, policy), /승인된 HTTPS/);
   assert.equal(authorizeBrowserCredentials({ ...config, storageStateEnv: undefined, cases: [{ steps: [{ action: 'fill', value: 'sample' }] }] }), false);
+});
+
+test('직접 전달은 시나리오 밖에서 승인한 정확한 API 경로만 실제 근거로 사용한다', () => {
+  const upstream = { ...live, verification: 'upstream', proof: null };
+  const config = { apiRules: [upstream] };
+  assert.throws(() => authorizeLiveUpstreams(config), /정책 필요/);
+  const approve = pathPrefix => JSON.stringify([{ origin: live.origin, pathPrefix }]);
+  assert.throws(() => authorizeLiveUpstreams(config, approve('/api')), /origin과 경로/);
+  assert.doesNotThrow(() => authorizeLiveUpstreams(config, approve(live.prefix)));
+  assert.equal(classifyResponse({ rule: upstream, headers: {} }).mode, 'unknown');
+  assert.equal(classifyResponse({ rule: upstream, headers: {}, forwarded: true }).mode, 'live');
+  assert.equal(classifyResponse({ rule: upstream, headers: { 'x-qa-fixture': 'on' }, forwarded: true }).mode, 'unknown');
+});
+
+test('MSW는 서비스 워커와 Mock 표식이 함께 있어야 판별하고 운영 모드에서 거부한다', () => {
+  const rule = { ...live, source: 'mock', proof: null };
+  const headers = { 'x-qa-fixture': 'on' };
+  assert.equal(classifyResponse({ rule, headers, msw: true }).mode, 'unknown');
+  assert.equal(classifyResponse({ rule, headers, msw: true, serviceWorker: true }).mode, 'mock');
+  assert.equal(classifyResponse({ rule, headers: {}, msw: true, serviceWorker: true }).mode, 'unknown');
+  const options = { schemaVersion: 1, baseUrl: 'https://qa.example.invalid', target: 'production', serviceWorkers: 'msw' };
+  assert.throws(() => parseScenario(options, [320], 'performance'), /비운영 Mock QA 전용/);
+  assert.throws(() => parseScenario({ ...options, target: 'test', engine: 'webkit' }, [320]), /Chromium/);
 });

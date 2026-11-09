@@ -72,7 +72,7 @@ node .agents/skills/frontend-workflow-harness/scripts/setup-github.mjs
 
 설정은 [최초 설정](docs/rules/project-setup.md), 도구별 선택은 [어댑터 목록](docs/adapters/README.md)을 참고한다. JS 앱의 없는 typecheck 같은 항목은 구체적인 이유와 함께 `notApplicable`에 남긴다.
 
-자동 QA를 쓰려면 [브라우저 설정](docs/adapters/browser-automation.md)에 따라 검증 URL·시나리오·API 출처 규칙을 설정한다. 화면을 탐색해 임의의 버튼을 누르는 대신 설정한 동작과 기대 결과를 실행한다. 운영 성능 측정은 별도 명령으로 지정한 페이지의 브라우저 지표를 반복 수집한다.
+자동 QA를 쓰려면 앱 루트에서 `browser-init --url 실제페이지주소`로 시나리오 초안과 Playwright 준비 명령을 받는다. 첫 탐색을 확인한 뒤 실제 인수 조건과 API 출처 규칙을 채운다. 운영 성능은 지정 URL에서 별도로 반복 측정한다. [브라우저 설정](docs/adapters/browser-automation.md)
 
 ## 에이전트에게 요청하기
 
@@ -105,6 +105,7 @@ node .agents/skills/frontend-workflow-harness/scripts/setup-github.mjs
 | `restore --id 42-order-search` | 기능 브랜치에서 보관한 상태를 로컬 활성 상태로 복구 |
 | `status --compact` | 현재 단계, 확인할 파일 경로, 승인·검사·증거의 상태만 표시. 전체 상태는 `status` |
 | `qa-report` | 현재 기록과 증거 유효성으로 기능별 `QA.md` 재생성. 검증을 새로 실행하지 않음 |
+| `browser-init --url 주소` | Playwright 준비 명령과 최초 탐색용 시나리오 초안 생성 |
 | `approve --gate plan --by 승인자 --file 근거.md` | 실제 사용자 지시를 현재 기획서·설정에 연결 |
 | `advance --to implement` | 조건을 확인하고 바로 다음 단계로 이동 |
 | `run all --compact` 또는 `run test --compact` | 실제 명령과 증거 저장은 동일하게 실행하고 검사 결과와 실패 로그 경로만 표시. 상세 출력은 `--compact` 생략 |
@@ -160,7 +161,7 @@ examples/                   실제 적용 절차와 인수 조건 예시
 npm run verify
 ```
 
-검증은 문서 링크·구문, 승인·상태 복구·증거 무효화·실패 경로·설치 업데이트와 GitHub 합성 응답을 다룬다. 별도 `npm run test:browser`는 설치된 Chromium으로 로컬 테스트 앱과 API를 실제 실행한다. 설치 명령과 실행 범위는 [검증 기록](docs/VERIFICATION.md)을 참고한다.
+검증은 문서 링크·구문, 승인·상태 복구·증거 무효화·실패 경로·설치 업데이트와 GitHub 합성 응답을 다룬다. `npm run test:browser`는 기본 Chromium으로 로컬 앱과 API를 실제 실행한다. 환경변수 `HARNESS_TEST_BROWSER`로 Firefox·WebKit을 선택할 수 있다. [검증 기록](docs/VERIFICATION.md)
 
 CLI는 기록과 게이트를 검증한다. 승인·수기 리뷰의 진위와 시나리오의 충분성은 사용자가 검토한다. API 출처 근거가 빠지면 미확인으로 기록한다. Git ignore 파일·외부 서비스·환경변수가 바뀌면 다시 검증한다.
 

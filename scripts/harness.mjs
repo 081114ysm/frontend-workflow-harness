@@ -10,7 +10,7 @@ import {
   fingerprint, planHash, configHash, approvalValid, assertPlan, evidenceFile,
   evidenceValid, validateReport, assertReady, assertCleanSource, withLock, activeState, terminal, restoreState, sourceFiles, BROWSER_CHECKS, requiredGithubChecks,
 } from './lib.mjs';
-import { parseScenario, browserExecutionTimeout } from './browser-scenario.mjs';
+import { parseScenario, browserExecutionTimeout, webOrigin } from './browser-scenario.mjs';
 
 const bundle = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -44,6 +44,38 @@ function doctor(root) {
     lockfiles, packageManager: pkg.packageManager || null, scripts: pkg.scripts || {},
     configExists: fs.existsSync(inside(root, CONFIG)),
     note: '읽기 전용 탐색 결과. 실제 명령/통합 브랜치/디자인/API 원본은 설정과 대조할 것.',
+  };
+}
+
+/** 실제 URL로 브라우저 초안을 만든다. 앱 동작의 인수 조건은 사용자가 채운다. */
+function initBrowser(root, options) {
+  ensure(options.url && URL.canParse(options.url), 'browser-init --url 실제 HTTP(S) 페이지 주소 필요');
+  const url = new URL(options.url);
+  ensure(!url.username && !url.password, '브라우저 URL에 로그인 정보 금지');
+  const origin = webOrigin(url.origin);
+  const target = options.target || (['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ? 'local' : 'test');
+  const engine = options.engine || 'chromium';
+  const production = target === 'production';
+  const draft = { schemaVersion: 1, baseUrl: origin, target, engine, cases: [],
+    api: { expect: 'none', rules: [] },
+    performance: { runs: production ? 3 : 1, settleMs: production ? 1500 : 250,
+      pages: [{ id: 'entry', path: url.pathname + url.search + url.hash }] },
+  };
+  parseScenario(draft, [1280], 'performance');
+  const setup = doctor(root);
+  const manager = setup.packageManager?.split('@')[0]
+    || ({ 'pnpm-lock.yaml': 'pnpm', 'yarn.lock': 'yarn', 'bun.lock': 'bun', 'bun.lockb': 'bun' }[setup.lockfiles[0]]) || 'npm';
+  const add = { npm: ['npm', 'install', '--save-dev'], pnpm: ['pnpm', 'add', '-D'], yarn: ['yarn', 'add', '-D'], bun: ['bun', 'add', '-d'] };
+  const run = { npm: ['npx'], pnpm: ['pnpm', 'exec'], yarn: ['yarn'], bun: ['bunx'] };
+  ensure(Object.hasOwn(add, manager), 'browser-init: npm/pnpm/yarn/bun 패키지 관리자만 안내');
+  const file = inside(root, options.file || 'qa/browser.json');
+  const relative = path.relative(root, file).split(path.sep).join('/');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(draft, null, 2) + '\n', { flag: 'wx' });
+  return { scenario: relative, target, engine, playwright: setup.browserPackages,
+    install: [...(setup.browserPackages.length ? [] : [[...add[manager], 'playwright']]), [...run[manager], 'playwright', 'install', engine]],
+    smoke: [process.execPath, path.join(bundle, 'scripts/browser-runner.mjs'), '--from', relative, '--mode', 'performance'],
+    next: production ? '승인된 페이지를 준비한 뒤 측정 명령 실행' : '페이지 탐색을 확인한 뒤 실제 인수 조건에 맞춰 cases와 API 규칙을 채울 것',
   };
 }
 
@@ -92,6 +124,14 @@ function recordApproval(root, state, options) {
   return { gate, recorded: true, note: '실제 사용자 지시의 기록이며 승인자를 인증하는 도구는 아님. 에이전트가 승인 문구를 만들어서는 안 됨.' };
 }
 
+/** Windows에서는 npm.cmd를 셸로 해석하지 않고 Node에 동봉된 CLI를 실행한다. */
+function checkArgv(argv) {
+  const [command, ...args] = argv;
+  if (process.platform !== 'win32' || !['npm', 'npx'].includes(command)) return argv;
+  const bundled = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', command + '-cli.js');
+  return fs.existsSync(bundled) ? [process.execPath, bundled, ...args] : argv;
+}
+
 /** 실제 검사와 증거는 동일하게 남기고, 요약 모드에서는 원시 로그를 출력하지 않는다. */
 function runCheck(root, state, config, name, compact) {
   ensure(['implement', 'review', 'qa', 'ready', 'pr'].includes(state.stage), '구현 시작 후 검사할 것');
@@ -100,7 +140,8 @@ function runCheck(root, state, config, name, compact) {
   ensure(command, `설정에 없는 검사: ${name}`);
   const before = fingerprint(root);
   const startedAt = now();
-  const result = spawnSync(command.argv[0], command.argv.slice(1), {
+  const [executable, ...args] = checkArgv(command.argv);
+  const result = spawnSync(executable, args, {
     cwd: inside(root, command.cwd), encoding: 'utf8', shell: false,
     timeout: command.timeoutMs, maxBuffer: 20 * 1024 * 1024,
     env: { ...process.env, CI: 'true', NO_COLOR: '1' },
@@ -297,7 +338,7 @@ function main() {
   const root = fs.realpathSync(path.resolve(options.root || process.cwd()));
   if (!command || command === 'help') return {
     usage: 'node scripts/harness.mjs [--root 프로젝트] 명령 [옵션]',
-    commands: ['doctor', 'init', 'configure --from 설정.json', 'start --id 42-auth-login [--qa non-ui --reason 사유]', 'restore --id 기능ID', 'status [--compact]', 'qa-report', 'browser-run --from 시나리오.json', 'approve --gate plan|pr --by 승인자 --file 증거경로', 'advance --to implement|review|qa|ready|pr|delivered [--url PR주소]', 'run 검사이름|all [--compact]', 'record --kind review|browser|coderabbit --file 증거.json', 'replan --reason 변경이유', 'issue-body'],
+    commands: ['doctor', 'init', 'configure --from 설정.json', 'start --id 42-auth-login [--qa non-ui --reason 사유]', 'restore --id 기능ID', 'status [--compact]', 'qa-report', 'browser-init --url 주소 [--file qa/browser.json --engine chromium|firefox|webkit]', 'browser-run --from 시나리오.json', 'approve --gate plan|pr --by 승인자 --file 증거경로', 'advance --to implement|review|qa|ready|pr|delivered [--url PR주소]', 'run 검사이름|all [--compact]', 'record --kind review|browser|coderabbit --file 증거.json', 'replan --reason 변경이유', 'issue-body'],
   };
   if (command === 'doctor') return doctor(root);
   if (command === 'status') {
@@ -315,6 +356,7 @@ function main() {
     return progressBlock(state);
   }
   return withLock(root, () => {
+    if (command === 'browser-init') return initBrowser(root, options);
     if (command === 'init') {
       const target = inside(root, CONFIG);
       ensure(!fs.existsSync(target), '설정이 이미 있음. 기존 파일을 보존함');

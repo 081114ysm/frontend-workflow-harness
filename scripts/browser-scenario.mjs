@@ -57,8 +57,14 @@ export function parseScenario(input, widths, mode = 'qa') {
   const origin = webOrigin(input.baseUrl);
   const target = input.target || 'local';
   const engine = input.engine || 'chromium';
+  const serviceWorkers = input.serviceWorkers ?? 'block';
   const timeoutMs = input.timeoutMs ?? 8000;
   ensure(['local', 'test', 'production'].includes(target) && ['chromium', 'firefox', 'webkit'].includes(engine), 'target/engine 설정 확인');
+  ensure(['block', 'msw'].includes(serviceWorkers), 'serviceWorkers: block 또는 msw 필요');
+  if (serviceWorkers === 'msw') {
+    ensure(engine === 'chromium' && mode === 'qa' && target !== 'production' && !input.performance && !input.storageStateEnv,
+      'MSW는 Chromium의 비운영 Mock QA 전용이며 성능 측정과 로그인 상태를 함께 사용할 수 없음');
+  }
   ensure(target !== 'production' || mode === 'performance', '운영 대상은 입력·클릭 없는 performance 모드만 허용');
   ensure(target !== 'local' || loopback(origin), 'local은 루프백 origin만 허용; 외부 테스트 대상은 test로 명시');
   ensure(list(widths, 8) && widths.length > 0 && widths.every(width => range(width, 240, 4096)), '뷰포트 너비 240~4096, 최대 8개 필요');
@@ -73,16 +79,24 @@ export function parseScenario(input, widths, mode = 'qa') {
     ensure(key(rule?.id) && ['live', 'mock'].includes(rule.source), 'API 규칙 id/source 필요');
     const apiOrigin = webOrigin(rule.origin ?? origin);
     const prefix = endpointPath(apiOrigin, rule.pathPrefix);
+    const verification = rule.verification ?? 'header';
+    ensure(verification === 'header' || (verification === 'upstream' && rule.source === 'live' && mode === 'qa' && serviceWorkers === 'block'),
+      'verification: header 또는 서비스 워커를 차단한 QA의 live upstream 필요');
     const statuses = rule.allowStatuses ?? [];
     ensure(list(statuses, 20) && statuses.every(code => range(code, 100, 599)), 'allowStatuses는 HTTP 상태 배열');
-    return { id: rule.id, origin: apiOrigin, prefix, source: rule.source, required: rule.required === true,
-      proof: rule.source === 'live' ? marker(rule.proof) : null, mockProof: rule.mockProof ? marker(rule.mockProof) : null, statuses };
+    return { id: rule.id, origin: apiOrigin, prefix, source: rule.source, verification, required: rule.required === true,
+      proof: rule.source === 'live' && verification === 'header' ? marker(rule.proof) : null,
+      mockProof: rule.mockProof ? marker(rule.mockProof) : null, statuses };
   });
   ensure(new Set(apiRules.map(rule => rule.id)).size === apiRules.length && new Set(apiRules.map(rule => rule.origin + rule.prefix)).size === apiRules.length, 'API 규칙 ID 또는 origin/경로 중복');
   ensure(!['live', 'mixed'].includes(expect) || apiRules.some(rule => rule.source === 'live' && rule.required), 'live/mixed는 필수 live 경로가 하나 이상 필요');
   apiRules.sort((a, b) => b.prefix.length - a.prefix.length);
   const rawMocks = input.mocks ?? [];
   ensure(list(rawMocks, 30) && (target !== 'production' || rawMocks.length === 0), '운영 대상에서는 fixture 응답 금지');
+  if (serviceWorkers === 'msw') {
+    ensure(expect === 'mock' && apiRules.some(rule => rule.required) && apiRules.every(rule => rule.source === 'mock' && rule.mockProof) && !rawMocks.length,
+      'MSW는 mock 모드, Mock 표식이 있는 필수 경로와 하네스 fixture 미사용 필요');
+  }
   const mocks = rawMocks.map(mock => {
     const mockOrigin = webOrigin(mock.origin ?? origin);
     const method = mock.method ?? 'GET';
@@ -109,6 +123,7 @@ export function parseScenario(input, widths, mode = 'qa') {
       if (step.action === 'press') ensure(nonempty(step.key), 'press key 필요');
       if (step.action === 'text') ensure(nonempty(step.value), 'text assertion 값 필요');
       if (step.action === 'fill') ensure(target !== 'production' && (typeof step.value === 'string' && step.env === undefined || step.value === undefined && envName(step.env)), 'fill: 비운영 대상의 value 또는 env 하나 필요');
+      if (serviceWorkers === 'msw') ensure(step.action !== 'fill' || !step.env, 'MSW 모드에서는 환경변수 자격 증명 입력 금지');
     }
   }
   if (mode === 'qa') {
@@ -133,9 +148,24 @@ export function parseScenario(input, widths, mode = 'qa') {
   ensure(mode !== 'performance' || performance, '성능 실행에는 performance 설정 필요');
   const origins = new Set([origin, ...assets.map(webOrigin), ...apiRules.map(rule => rule.origin), ...mocks.map(mock => mock.origin)]);
   ensure(target !== 'local' || [...origins].every(loopback), 'local은 API와 리소스도 루프백 origin만 허용');
-  return { origin, target, engine, timeoutMs, widths: [...new Set(widths)], cases, statesNotApplicable: input.statesNotApplicable,
+  return { origin, target, engine, serviceWorkers, timeoutMs, widths: [...new Set(widths)], cases, statesNotApplicable: input.statesNotApplicable,
     storageStateEnv: input.storageStateEnv, apiRules, expect, mocks, performance,
     origins };
+}
+
+/** 실행자가 직접 승인한 HTTPS 또는 루프백 API 경로에 한해 직접 전달을 허용한다. */
+export function authorizeLiveUpstreams(config, policyJson) {
+  const upstreams = config.apiRules.filter(rule => rule.verification === 'upstream');
+  if (!upstreams.length) return;
+  ensure(policyJson, '직접 API 전달은 실행자의 FRONTEND_HARNESS_LIVE_UPSTREAMS 정책 필요');
+  const entries = JSON.parse(policyJson);
+  ensure(list(entries, 40), '실제 API 승인 정책은 origin/pathPrefix 배열 필요');
+  const approved = new Set(entries.map(entry => {
+    const origin = webOrigin(entry?.origin);
+    ensure(origin.startsWith('https://') || loopback(origin), '실제 API 승인에는 HTTPS 또는 루프백 origin 필요');
+    return origin + endpointPath(origin, entry.pathPrefix);
+  }));
+  ensure(upstreams.every(rule => approved.has(rule.origin + rule.prefix)), '실제 API origin과 경로를 직접 전달 정책에서 승인해야 함');
 }
 
 /** 기본 QA 시간에 성능 탐색·대기·브라우저 컨텍스트 준비 시간을 더한다. */
@@ -173,17 +203,23 @@ export function matchRule(rules, url) {
 }
 
 /** 응답마다 출처 근거를 확인한다. 표식이 충돌하거나 응답이 없으면 unknown이다. */
-export function classifyResponse({ rule, headers, fixture = false, serviceWorker = false, failed = false }) {
-  if (failed || serviceWorker) return { mode: 'unknown', reason: failed ? '응답 미관측' : '서비스 워커 응답' };
+export function classifyResponse({ rule, headers, fixture = false, serviceWorker = false, msw = false, forwarded = false, failed = false }) {
+  if (failed) return { mode: 'unknown', reason: '응답 미관측' };
+  const match = proof => Boolean(proof && headers[proof.name] === proof.value);
+  if (msw) {
+    return serviceWorker && rule?.source === 'mock' && match(rule.mockProof)
+      ? { mode: 'mock', reason: '서비스 워커 응답과 Mock 표식 일치' }
+      : { mode: 'unknown', reason: 'MSW 서비스 워커 응답과 Mock 표식 미확인' };
+  }
+  if (serviceWorker) return { mode: 'unknown', reason: '서비스 워커 응답' };
   if (fixture) return { mode: 'mock', reason: '하네스 fixture 응답' };
   if (!rule) return { mode: 'unknown', reason: '등록되지 않은 API 경로' };
-  const match = proof => Boolean(proof && headers[proof.name] === proof.value);
-  const live = match(rule.proof);
+  const live = rule.verification === 'upstream' ? forwarded : match(rule.proof);
   const mock = match(rule.mockProof);
   if (live && mock) return { mode: 'unknown', reason: '출처 표식 충돌' };
   if (mock || rule.source === 'mock') return { mode: 'mock', reason: mock ? 'Mock 표식' : '등록된 Mock 서버' };
-  if (live) return { mode: 'live', reason: '등록된 origin·경로·실서버 응답 표식 일치' };
-  return { mode: 'unknown', reason: '실서버 응답 표식 불일치' };
+  if (live) return { mode: 'live', reason: forwarded ? '승인된 서버에 요청을 직접 전달함' : '등록된 origin·경로·실서버 응답 표식 일치' };
+  return { mode: 'unknown', reason: rule.verification === 'upstream' ? '승인된 서버에 직접 전달한 기록 없음' : '실서버 응답 표식 불일치' };
 }
 
 /** 응답 분류, 필수 경로 관측과 HTTP 성공 여부를 함께 검증한다. */
