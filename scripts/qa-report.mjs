@@ -24,8 +24,13 @@ export function renderQaReport({ state, config, validity, headSha, sourceFingerp
   const rejected = state.qaFailures?.browser;
   const browserRecord = rejected || state.evidence.browser;
   const browser = browserRecord?.summary;
+  const automation = browserRecord?.automated ? browser?.automation : null;
+  const nonUi = state.qaProfile?.kind === 'non-ui';
+  const browserReady = nonUi
+    ? Boolean(config.qa?.allowNonUi && !config.requireLiveApi && config.checks.test && state.qaProfile.reason)
+    : validity.evidence.browser && !rejected && (!(config.requireLiveApi || config.qa?.automationRequired) || browserRecord?.automated === true);
   const ready = validity.plan && Object.keys(config.checks).every(name => state.checks[name]?.passed && validity.checks[name])
-    && validity.evidence.review && validity.evidence.browser && !rejected;
+    && validity.evidence.review && browserReady;
   const lines = [BEGIN, `# ${text(state.id)} QA`, '',
     '> 자동 생성 영역이다. 수동 메모는 이 영역 아래에 쓴다. 이 문서는 생성 시점의 스냅샷이며, 코드·기획·설정·증거 변경 뒤에는 `qa-report`로 갱신하고 필요한 검증을 다시 실행한다.', '',
     `- 생성 시각: ${text(generatedAt)}`, `- 현재 단계: ${text(state.stage)}`,
@@ -41,17 +46,33 @@ export function renderQaReport({ state, config, validity, headSha, sourceFingerp
   }
   for (const [name, reason] of Object.entries(config.notApplicable || {})) lines.push(row([name, '해당 없음', '—', reason]));
   lines.push('', '## 브라우저 QA', '',
-    `- 기록 상태: ${rejected ? '기록 거부 — 통과 증거로 사용하지 않음' : result(browserRecord, validity.evidence.browser)}`,
+    `- 기록 상태: ${nonUi ? '해당 없음 — ' + text(state.qaProfile.reason) : rejected ? '기록 거부 — 통과 증거로 사용하지 않음' : result(browserRecord, validity.evidence.browser)}`,
     `- 기록 시각: ${text(browserRecord?.at || '미실행')}`,
     `- URL: ${text(browser?.url || '미기록')}`, `- 브라우저: ${text(browser?.browser || '미기록')}`,
-    `- API 모드: ${text(browser?.apiMode || '미기록')}`,
+    `- API 모드: ${text(browser?.apiMode || '미기록')}${browser && !automation ? ' (수기 보고)' : ''}`,
     `- 보고된 뷰포트: ${text(Array.isArray(browser?.viewports) ? browser.viewports.join(', ') : '미기록')}`,
     `- 필요한 뷰포트: ${text(config.context.viewports.join(', '))}`);
   if (rejected) lines.push(`- 거부 이유: ${text(rejected.error)}`);
+  if (automation?.error) lines.push(`- 자동 실행: ${text(automation.error)}`);
+  const api = automation?.api;
+  if (api) lines.push(`- API 관측: live ${text(api.counts.live)}, mock ${text(api.counts.mock)}, unknown ${text(api.counts.unknown)}; 기대 ${text(api.expected)}`);
   lines.push('', '| 영역 | 보고된 결과 | 실제 결과·미적용 사유 |', '|---|---|---|');
   for (const [name, label] of Object.entries(LABELS)) {
     const check = browser?.checks?.[name];
-    lines.push(row([label, check ? STATUSES[check.status] || '형식 오류' : '미실행', check?.detail || '아직 기록하지 않음']));
+    lines.push(row([label, nonUi ? '해당 없음' : check ? STATUSES[check.status] || '형식 오류' : '미실행', nonUi ? state.qaProfile.reason : check?.detail || '아직 기록하지 않음']));
+  }
+  const perf = automation?.performance;
+  if (perf) {
+    lines.push('', '## 브라우저 성능 측정', '', '- 새 브라우저 컨텍스트에서 반복한 실험실 탐색 측정. 현장 사용자 지표가 아님.',
+      `- 뷰포트: ${text(perf.viewport)}, 페이지당 ${text(perf.runs)}회, 관측 대기 ${text(perf.settleMs)}ms, 네트워크 제한 없음`, '',
+      '| 페이지 | 지표 | 중앙값 | 표본 수 | 예산 | 판정 |', '|---|---|---|---|---|---|');
+    for (const page of perf.pages) {
+      for (const [name, metric] of Object.entries(page.metrics)) {
+        lines.push(row([page.id, name, metric.median === null ? '미측정' : Number(metric.median.toFixed(4)), metric.count, metric.limit,
+          metric.passed === null ? '예산 미설정' : metric.passed ? '통과' : '실패']));
+      }
+    }
+    if (!perf.passed) lines.push('', '- 설정한 측정 횟수 또는 예산을 충족하지 못함.');
   }
   lines.push('', '## 증거 파일', '');
   const records = [...Object.values(state.checks), ...Object.values(state.evidence), ...(rejected ? [rejected] : [])];
@@ -67,6 +88,7 @@ export function renderQaReport({ state, config, validity, headSha, sourceFingerp
   if (!validity.plan) lines.push('- 현재 기획·설정에 대한 유효한 승인 기록이 없음.');
   if (!ready) lines.push('- QA 완료 조건이 충족되지 않았다. 위 미실행·실패·차단·재검증 항목을 해결해야 한다.');
   if (browser?.apiMode === 'mock') lines.push('- Mock으로 확인한 결과다. 실제 서버·쿠키·CORS·인증 연동은 별도 검증이 필요하다.');
+  if (browser?.apiMode === 'mixed' || browser?.apiMode === 'unknown') lines.push('- 전체를 실제 API로 확인하지 못했다. API 관측과 규칙별 증거를 확인한다.');
   if (rejected) lines.push('- 거부된 보고서의 내용은 실패·차단 기록으로만 남긴다. 성공한 브라우저 증거를 다시 기록해야 한다.');
   lines.push('- 브라우저 결과는 실제 조작 후 기록해야 한다. 이 문서의 자동 생성이 브라우저 검증 실행을 뜻하지 않는다.',
     '- 원시 stdout/stderr·쿠키·토큰은 이 문서에 복사하지 않는다. 공유할 화면과 보고서의 민감정보를 확인한다.', '', END);

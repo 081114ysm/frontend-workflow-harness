@@ -32,6 +32,9 @@ node scripts/harness.mjs configure --from frontend-harness.config.json
 | requireLiveApi | 이번 앱에서 실제 API 연동을 PR 필수 조건으로 삼을지 |
 | requireCi | CI 필수 여부. false여도 'CI 통과'라고 보고할 수는 없음 |
 | github | 기본 GitHub 모드 여부와 실제 owner/repo. 로컬 전용이면 enabled: false |
+| github.requiredChecks | `requireCi: true`인 GitHub 모드의 필수 check run 이름과 GitHub App slug. 기능 착수와 PR 생성 전에 확인한다 |
+| qa.allowNonUi | 화면에 영향이 없는 작업에서 실제 test 검사와 리뷰로 QA할지 |
+| qa.automationRequired | 화면 QA에 수기 보고서 대신 `browser-run` 증거를 요구할지 |
 | codeRabbit.required | 현재 PR head의 실제 CodeRabbit 리뷰를 완료 조건으로 삼을지 |
 | approval | 기존 지시를 포함해 승인 근거를 요구할 단계 |
 | context | framework, packageManager, designSource, apiSource, 지원 브라우저, viewports |
@@ -43,5 +46,9 @@ node scripts/harness.mjs configure --from frontend-harness.config.json
 모노레포는 `cwd: "apps/web"`와 루트 패키지 매니저의 filter 인자를 실제 구조에 맞춰 사용한다. 실행하는 프로젝트와 `--root`가 같아야 한다. 설정을 바꾸면 기존 승인·검증 기록은 무효가 된다.
 
 선택 도구는 [어댑터 목록](../adapters/README.md)에서 필요한 것만 적용한다. 안 쓰는 어댑터를 삭제하며 core 링크를 깨뜨리지 않는다.
+
+자동 QA와 실제 API 출처 확인을 설정하려면 [브라우저 자동화](../adapters/browser-automation.md)를 따른다. 로그인, 테스트 데이터, 검증 URL·시나리오, 응답 출처 규칙은 프로젝트가 제공한다.
+
+1.0에서 올린 프로젝트는 기존 설정을 보존한다. GitHub CI가 필수라면 기존 PR의 실제 check run 이름과 App slug를 확인해 `github.requiredChecks`를 추가한다. 번들이나 설정이 바뀐 진행 중 기능은 현재 기획 승인과 검사 결과의 유효성을 다시 확인한다.
 
 최초 설정은 에이전트가 수행한다. GitHub 모드라면 `github.mjs check`로 대상과 default를 대조하고 `setup-github.mjs`로 템플릿·CodeRabbit 파일을 준비한다. 3단계 전략은 integrationBranch를 dev, defaultBranch를 main 등 실제 값으로 지정한다. 라벨은 기존 것을 재사용하고 필요하다고 합의한 경우에만 추가한다. 사용하지 않는 dev/staging 브랜치를 형식적으로 만들지 않는다.

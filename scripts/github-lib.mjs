@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import {
   ensure, inside, loadConfig, loadState, saveState, writeJson, readJson, progressBlock,
   git, assertReady, assertCleanSource, approvalValid, featureDirectory, sha, withLock,
+  activeState, terminal, evidenceValid, evidenceFile, fingerprint, planHash, configHash, now, requiredGithubChecks,
 } from './lib.mjs';
 export { progressBlock } from './lib.mjs';
 
@@ -40,6 +41,61 @@ function bodyFile(root, relative) {
   return full;
 }
 
+const PR_FIELDS = 'url,state,headRefOid,headRefName,baseRefName,mergedAt,mergeCommit,reviews,statusCheckRollup';
+const latestCheck = (checks, head, name, app) => checks
+  .filter(check => check.head_sha === head && check.name === name && check.app?.slug === app)
+  .sort((a, b) => b.id - a.id)[0];
+const succeeded = check => check?.status === 'completed' && check?.conclusion === 'success';
+const reviewed = check => succeeded(check) && check.output?.title === 'Finished';
+/** 지정한 커밋의 모든 체크 페이지를 가져온다. 재실행 결과도 현재 판정에 필요하다. */
+function checkRuns(json, repo, head) {
+  const pages = json(['api', `repos/${repo}/commits/${head}/check-runs?filter=all&per_page=100`, '--paginate', '--slurp']);
+  ensure(Array.isArray(pages) && pages.every(page => Array.isArray(page?.check_runs)), 'GitHub check runs 응답 형식 오류');
+  return pages.flatMap(page => page.check_runs);
+}
+
+/** 실제 PR head의 체크와 통합 브랜치 이력을 확인한 뒤 완료 증거를 저장한다. */
+function finishRemote(root, state, config, repo, pr, json) {
+  ensure(state.stage === 'pr', 'PR 단계에서만 원격 완료를 확인할 수 있음');
+  assertReady(root, state, config); assertCleanSource(root);
+  const head = git(root, ['rev-parse', 'HEAD']);
+  ensure(pr.url === state.pullRequestUrl && pr.headRefName === state.branch && pr.headRefOid === head, 'PR 주소/브랜치/head가 현재 작업과 다름');
+  const mergeCommit = pr.mergeCommit?.oid;
+  ensure(pr.state === 'MERGED' && Number.isFinite(Date.parse(pr.mergedAt)) && /^[a-f0-9]{40}$/.test(mergeCommit || ''), 'GitHub에서 실제 머지가 확인되지 않음');
+  const required = requiredGithubChecks(config);
+  const checks = required.length || config.codeRabbit?.required ? checkRuns(json, repo, head) : [];
+  const passed = required.map(({ name, app }) => {
+    const check = latestCheck(checks, head, name, app);
+    ensure(succeeded(check), `현재 PR head의 필수 검사 미통과: ${app}/${name}`);
+    return { name, app, id: check.id, url: check.details_url, conclusion: check.conclusion };
+  });
+  if (config.codeRabbit?.required) {
+    ensure(reviewed(latestCheck(checks, head, 'CodeRabbit', 'coderabbitai')), '현재 PR head의 실제 CodeRabbit 리뷰 미완료');
+    ensure(evidenceValid(root, state, state.evidence.coderabbit), '현재 코드의 CodeRabbit 지적 처리 기록 필요');
+  }
+  const targetRef = config.integrationBranch.split('/').map(encodeURIComponent).join('/');
+  const targetTip = json(['api', `repos/${repo}/git/ref/heads/${targetRef}`]).object?.sha;
+  ensure(/^[a-f0-9]{40}$/.test(targetTip || ''), '원격 통합 브랜치 커밋 확인 실패');
+  if (targetTip !== mergeCommit) {
+    const comparison = json(['api', `repos/${repo}/compare/${mergeCommit}...${targetTip}`]);
+    ensure(comparison.status === 'ahead' && comparison.merge_base_commit?.sha === mergeCommit, '머지 커밋이 현재 원격 통합 브랜치 이력에 없음');
+  }
+  ensure(git(root, ['rev-parse', 'HEAD']) === head && git(root, ['branch', '--show-current']) === state.branch, '원격 확인 중 브랜치 또는 HEAD 변경');
+  assertReady(root, state, loadConfig(root)); assertCleanSource(root);
+  const merge = { merged: true, pullRequestUrl: pr.url, targetBranch: pr.baseRefName, mergeCommit, mergedAt: pr.mergedAt, headSha: head, targetTip };
+  const ci = passed.length ? { status: 'pass', headSha: head, checks: passed } : null;
+  const relative = `${featureDirectory(state)}/evidence/github-completion.json`;
+  writeJson(inside(root, relative), { source: 'github-api', merge, ci, observedAt: now() });
+  const common = { at: now(), fingerprint: fingerprint(root), planHash: planHash(root, state), configHash: configHash(root), files: [evidenceFile(root, state, relative)], remote: true };
+  state.evidence.merge = { ...common, summary: merge };
+  if (ci) state.evidence.ci = { ...common, summary: ci };
+  else delete state.evidence.ci;
+  state.stage = 'done';
+  saveState(root, state, 'github-finalize');
+  return { stage: 'done', merge, ci, evidence: relative };
+}
+
+/** 현재 프로젝트의 GitHub 명령을 실행한다. 전송 함수 주입으로 원격 없이 실패 경로를 검증한다. */
 export function githubWorkflow(root, command, options = {}, call = args => gh(root, args)) {
   const config = loadConfig(root); const repo = target(config);
   const invoke = args => call(args);
@@ -53,8 +109,8 @@ export function githubWorkflow(root, command, options = {}, call = args => gh(ro
   return withLock(root, () => {
     if (command === 'issue-create') {
       ensure(/^[a-z0-9][a-z0-9-]{0,79}$/.test(options.key || '') && options.title?.trim(), '--key 고유요청ID와 --title 필요');
-      const activeFile = inside(root, '.frontend-workflow/state.json');
-      if (fs.existsSync(activeFile)) ensure(loadState(root).stage === 'done', '활성 기능이 있음. 새 기능 이슈의 자동 착수는 보류');
+      const active = activeState(root, config);
+      ensure(!active || terminal(active), '활성 기능이 있음. 새 기능 이슈의 자동 착수는 보류');
       const journalFile = inside(root, `.frontend-workflow/requests/${options.key}.json`);
       const previous = fs.existsSync(journalFile) ? readJson(journalFile) : null;
       ensure(!previous || previous.repository === repo, '요청 기록과 대상 저장소가 다름');
@@ -96,6 +152,7 @@ export function githubWorkflow(root, command, options = {}, call = args => gh(ro
       saveState(root, state, 'issue-sync'); return { synced: true, issue: state.issue };
     }
     if (command === 'pr-create') {
+      requiredGithubChecks(config);
       if (state.stage === 'pr' && state.pullRequestUrl) return { url: state.pullRequestUrl, reused: true };
       ensure(state.stage === 'ready', 'ready 단계에서만 PR을 생성할 수 있음');
       assertReady(root, state, config); assertCleanSource(root);
@@ -113,18 +170,30 @@ export function githubWorkflow(root, command, options = {}, call = args => gh(ro
       state.stage = 'pr'; state.pullRequestUrl = url;
       saveState(root, state, 'pr-create'); return { url, reused: existing.length > 0 };
     }
-    if (command === 'pr-inspect' || command === 'issue-close') {
+    if (command === 'pr-recover') {
+      requiredGithubChecks(config);
+      ensure(state.stage === 'ready', 'ready 스냅샷에서만 PR 연결 복구 가능');
+      assertReady(root, state, config); assertCleanSource(root);
+      ensure(!config.approval.pr || approvalValid(root, state, 'pr'), 'PR 생성 승인 기록 필요');
+      numberFromUrl(options.url, repo, 'pull');
+      const pr = json(['pr', 'view', options.url, '--repo', repo, '--json', PR_FIELDS]);
+      ensure(pr.url === options.url && ['OPEN', 'MERGED'].includes(pr.state) && pr.baseRefName === config.integrationBranch
+        && pr.headRefName === state.branch && pr.headRefOid === git(root, ['rev-parse', 'HEAD']), '실제 PR과 현재 기능 브랜치·커밋이 일치하지 않음');
+      state.stage = 'pr'; state.pullRequestUrl = pr.url;
+      saveState(root, state, 'pr-recover');
+      return { url: pr.url, stage: 'pr' };
+    }
+    if (['pr-inspect', 'finalize', 'issue-close'].includes(command)) {
       numberFromUrl(state.pullRequestUrl, repo, 'pull');
-      const pr = json(['pr', 'view', state.pullRequestUrl, '--repo', repo, '--json', 'url,state,headRefOid,baseRefName,mergedAt,mergeCommit,reviews,statusCheckRollup']);
+      const pr = json(['pr', 'view', state.pullRequestUrl, '--repo', repo, '--json', PR_FIELDS]);
       ensure(pr.baseRefName === config.integrationBranch, '실제 PR의 통합 대상이 다름');
+      if (command === 'finalize') return finishRemote(root, state, config, repo, pr, json);
       if (command === 'pr-inspect') {
         ensure(pr.headRefOid === git(root, ['rev-parse', 'HEAD']), '로컬과 실제 PR head가 다름');
-        const checks = json(['api', `repos/${repo}/commits/${pr.headRefOid}/check-runs?per_page=100`, '--paginate', '--slurp', '--jq', '[.[].check_runs[]]']);
-        // A successful/skipped check alone is not proof of a completed review.
-        const codeRabbit = checks.filter(check => check.name === 'CodeRabbit' && check.app?.slug === 'coderabbitai')
-          .sort((a, b) => b.id - a.id)[0];
+        const checks = checkRuns(json, repo, pr.headRefOid);
+        const codeRabbit = latestCheck(checks, pr.headRefOid, 'CodeRabbit', 'coderabbitai');
         const result = { ...pr, codeRabbit: codeRabbit || null,
-          actualCodeRabbitReviewCompleted: Boolean(codeRabbit?.status === 'completed' && codeRabbit?.conclusion === 'success' && codeRabbit?.output?.title === 'Finished'),
+          actualCodeRabbitReviewCompleted: reviewed(codeRabbit),
           note: '완료 상태와 별개로 실제 리뷰 지적·스레드를 읽고 처리해야 함. legacy status는 직접 확인.' };
         writeJson(inside(root, `${featureDirectory(state)}/evidence/github-pr.json`), result);
         return result;

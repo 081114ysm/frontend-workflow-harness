@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "baseUrl": "http://127.0.0.1:3000",
+  "target": "local",
+  "engine": "chromium",
+  "timeoutMs": 8000,
+  "cases": [
+    { "id": "search-order", "area": "journey", "steps": [
+      { "action": "goto", "path": "/orders" },
+      { "action": "fill", "locator": { "label": "주문 번호" }, "value": "A-001" },
+      { "action": "click", "locator": { "role": "button", "name": "검색" } },
+      { "action": "text", "locator": { "testId": "order-results" }, "value": "A-001" }
+    ] },
+    { "id": "search-by-keyboard", "area": "keyboard", "steps": [
+      { "action": "goto", "path": "/orders" },
+      { "action": "press", "locator": { "label": "주문 번호" }, "key": "Tab" },
+      { "action": "focus", "locator": { "role": "button", "name": "검색" } }
+    ] },
+    { "id": "initial-state", "area": "states", "steps": [
+      { "action": "goto", "path": "/orders" },
+      { "action": "visible", "locator": { "testId": "search-help" } }
+    ] }
+  ],
+  "api": {
+    "expect": "live",
+    "rules": [
+      { "id": "orders", "origin": "http://127.0.0.1:3000", "pathPrefix": "/api/orders", "source": "live", "required": true,
+        "proof": { "name": "x-api-mode", "value": "live-v1" }, "mockProof": { "name": "x-api-mode", "value": "fixture" } }
+    ]
+  },
+  "performance": { "runs": 3, "settleMs": 1200, "viewport": 1280, "pages": [
+    { "id": "orders", "path": "/orders", "ready": { "role": "heading", "name": "주문 목록" }, "budgets": { "ttfbMs": 800, "lcpMs": 2500, "cls": 0.1 } }
+  ] }
+}

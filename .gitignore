@@ -7,4 +7,5 @@ coverage/
 playwright-report/
 test-results/
 .frontend-workflow/.lock/
+.frontend-workflow/runtime/
 .frontend-workflow/**/*.log

@@ -8,4 +8,4 @@ MSW, Playwright routing, 기존 fixture 등 현재 도구를 재사용한다. fi
 
 실제 API QA에서는 CORS·쿠키 SameSite·인증·갱신·권한·응답 형식·실서버 오류를 확인한다. 읽기 검증과 쓰기 검증의 테스트 계정을 분리하고 실제 데이터 오염을 피한다. 요청 collection이 필요하면 QA에서 사용한 요청을 재사용하되 비밀값은 제외한다.
 
-Mock만 검증한 결과는 `apiMode: mock`, 서버 통신이 없는 경우 `none`과 이유를 적는다. `requireLiveApi`를 켜면 실제 연동 전 ready가 막힌다. 서버가 준비되지 않았다고 이 설정을 몰래 끄지 않는다.
+자동 검증은 응답의 출처 표식과 하네스의 fixture 사용 기록을 대조한다. 함께 관측되면 `mixed`, 근거가 부족하면 `unknown`, API 호출이 없는 시나리오는 `none`으로 남긴다. `requireLiveApi`를 켜면 입증된 `live`만 ready를 통과한다. 규칙과 기대값은 [브라우저 자동화](browser-automation.md)에 따라 설정한다.

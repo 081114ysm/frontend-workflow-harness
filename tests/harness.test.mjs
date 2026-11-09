@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { BROWSER_CHECKS, fingerprint, inside, validateConfig } from '../scripts/lib.mjs';
+import { ACTIVE_STATE, BROWSER_CHECKS, fingerprint, inside, validateConfig } from '../scripts/lib.mjs';
 import { githubWorkflow } from '../scripts/github-lib.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +28,7 @@ function fixture(t, override = {}) {
   const config = {
     schemaVersion: 1, configured: true, project: 'Fixture', integrationBranch: 'main', defaultBranch: 'main',
     branchPrefix: 'codex/', reviewMode: 'self', requireLiveApi: false, requireCi: true,
+    github: { enabled: true, repository: 'example/app', requiredChecks: [{ name: 'verify', app: 'github-actions' }] },
     approval: { plan: true, pr: true },
     checks: { test: { argv: [process.execPath, '-e', 'process.exit(0)'], cwd: '.', timeoutMs: 1000 } },
     notApplicable: { lint: '테스트 fixture에 lint 대상 없음', typecheck: '테스트 fixture는 JS', build: '번들링 없는 테스트 fixture' },
@@ -39,7 +40,7 @@ function fixture(t, override = {}) {
   const run = (...args) => spawnSync(process.execPath, [cli, '--root', root, ...args], { cwd: root, encoding: 'utf8' });
   const ok = (...args) => { const r = run(...args); assert.equal(r.status, 0, r.stderr + r.stdout); return r.stdout; };
   const bad = (pattern, ...args) => { const r = run(...args); assert.notEqual(r.status, 0, r.stdout); assert.match(r.stderr, pattern); return r; };
-  const state = () => JSON.parse(fs.readFileSync(path.join(root, '.frontend-workflow/state.json'), 'utf8'));
+  const state = () => JSON.parse(fs.readFileSync(path.join(root, ACTIVE_STATE), 'utf8'));
   const evidence = '.frontend-workflow/features/42-search/evidence/';
   const report = () => fs.readFileSync(path.join(root, '.frontend-workflow/features/42-search/QA.md'), 'utf8');
   const start = () => ok('start', '--id', '42-search', '--issue', 'https://github.com/example/app/issues/42');
@@ -167,6 +168,22 @@ test('깨진 브라우저 JSON도 거부 기록을 남기며 이전 통과 기�
   assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
 });
 
+test('실행기 설정 오류를 QA에 남기되 시나리오의 원문과 비밀값은 남기지 않는다', t => {
+  const f = fixture(t);
+  const secret = 'SYNTHETIC_SECRET_NOT_FOR_REPORT';
+  f.write('bad-json.json', '{"password":"' + secret + '" invalid}');
+  f.write('bad-schema.json', { schemaVersion: 0, password: secret });
+  f.ready();
+  for (const [file, reason] of [['bad-json.json', /시나리오 JSON 구문 오류/], ['bad-schema.json', /시나리오 schemaVersion: 1 필요/]]) {
+    f.browser();
+    const result = f.bad(reason, 'browser-run', '--from', file);
+    assert(!result.stderr.includes(secret));
+    assert.equal(f.state().evidence.browser, undefined);
+    assert.match(f.report(), reason);
+    assert(!f.report().includes(secret));
+  }
+});
+
 test('빈 파일과 없는 브라우저 보고서도 이전 통과를 무효화하고 QA 문서에 남긴다', t => {
   const f = fixture(t); f.ready(); f.write(f.evidence + 'empty.json', '');
   for (const [name, pattern] of [['empty.json', /비어 있지 않은/], ['missing.json', /ENOENT/]]) {
@@ -266,6 +283,31 @@ test('run all은 첫 실패 뒤 다른 검사를 실행하지 않는다', t => {
   f.implement(); assert.equal(f.run('run', 'all').status, 1); assert.equal(f.state().checks.extra, undefined);
 });
 
+test('요약 검사는 로그를 펼치지 않고 실제 결과와 실패 로그 경로를 반환한다', t => {
+  const output = 'FIXTURE_OUTPUT_NOT_FOR_SUMMARY';
+  const f = fixture(t, { checks: {
+    test: { argv: [process.execPath, '-e', `console.log('${output}')`], cwd: '.', timeoutMs: 1000 },
+    extra: { argv: [process.execPath, '-e', `console.error('${output}'); process.exit(7)`], cwd: '.', timeoutMs: 1000 },
+    later: { argv: [process.execPath, '-e', 'process.exit(0)'], cwd: '.', timeoutMs: 1000 },
+  } });
+  f.implement();
+  const run = f.run('run', 'all', '--compact');
+  assert.equal(run.status, 1);
+  assert(!run.stdout.includes(output));
+  assert.equal(run.stderr, '');
+  const [passed, failed, later] = JSON.parse(run.stdout);
+  assert.deepEqual(passed, { name: 'test', passed: true });
+  assert.equal(failed.name, 'extra');
+  assert.equal(failed.passed, false);
+  assert.equal(failed.exitCode, 7);
+  assert.equal(failed.reason, 'exit-code');
+  assert.equal(fs.readFileSync(path.join(f.root, failed.log), 'utf8').trim(), output);
+  assert.equal(later, undefined);
+  assert.equal(f.state().checks.test.passed, true);
+  assert.equal(f.state().checks.extra.exitCode, 7);
+  assert.match(f.ok('run', 'test'), /FIXTURE_OUTPUT_NOT_FOR_SUMMARY/);
+});
+
 test('shell 치환과 파이프 문자를 인자로만 전달한다', t => {
   const f = fixture(t, { checks: { test: { argv: [process.execPath, '-e', 'if(process.argv[1] !== "$(touch PWNED); echo x | cat") process.exit(1)', '$(touch PWNED); echo x | cat'], cwd: '.', timeoutMs: 1000 } } });
   f.implement(); f.ok('run', 'test'); assert.equal(fs.existsSync(path.join(f.root, 'PWNED')), false);
@@ -275,6 +317,32 @@ test('코드가 바뀌면 기존 검사와 리뷰가 무효다', t => {
   const f = fixture(t); f.qa(); f.ok('run', 'all'); f.browser();
   f.write('app.js', 'export const value = 2;\n'); f.bad(/검사 통과/, 'advance', '--to', 'ready');
   const status = JSON.parse(f.ok('status')); assert.equal(status.validChecks.test, false); assert.equal(status.validEvidence.review, false);
+});
+
+test('요약 상태는 단계와 증거의 유효성을 보여주고 큰 보고서 본문은 펼치지 않는다', t => {
+  const f = fixture(t);
+  assert.equal(JSON.parse(f.ok('status', '--compact')).active, false);
+  f.ready();
+  const detail = 'DETAIL_ONLY_IN_FULL_REPORT '.repeat(300);
+  const checks = Object.fromEntries(BROWSER_CHECKS.map(name => [name, { status: 'pass', detail }]));
+  f.browser({ checks });
+  const stored = f.state();
+  const full = f.ok('status');
+  const raw = f.ok('status', '--compact');
+  assert.deepEqual(f.state(), stored);
+  const compact = JSON.parse(raw);
+  assert.equal(compact.stage, 'ready');
+  assert.equal(compact.approvals.plan, 'valid');
+  assert.equal(compact.checks.test, 'passed');
+  assert.equal(compact.evidence.browser, 'passed');
+  assert.equal(compact.qaReport, '.frontend-workflow/features/42-search/QA.md');
+  assert(full.includes(detail));
+  assert(!raw.includes('DETAIL_ONLY_IN_FULL_REPORT'));
+  assert(Buffer.byteLength(raw) < Buffer.byteLength(full));
+  f.write('app.js', 'export const value = 2;\n');
+  const stale = JSON.parse(f.ok('status', '--compact'));
+  assert.equal(stale.checks.test, 'stale');
+  assert.equal(stale.evidence.browser, 'stale');
 });
 
 test('증거 파일을 사후 수정하면 무효다', t => {
@@ -321,25 +389,91 @@ test('PR 생성 승인이 없거나 코드 미커밋이면 PR 단계로 가지 �
   f.approve('pr'); f.bad(/커밋/, 'advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
 });
 
-test('전체 로컬 사이클에서 PR 전 CI 교착 없이 머지 후 완료한다', t => {
-  const f = fixture(t); f.pr(); assert.equal(f.state().evidence.ci, undefined);
-  f.bad(/CI/, 'advance', '--to', 'done');
-  f.write(f.evidence + 'ci.json', { status: 'pass', headSha: f.git('rev-parse', 'HEAD'), runUrl: 'https://github.com/example/app/actions/runs/1' });
-  f.ok('record', '--kind', 'ci', '--file', f.evidence + 'ci.json');
-  f.bad(/머지/, 'advance', '--to', 'done');
-  f.write(f.evidence + 'merge.json', { merged: true, pullRequestUrl: f.state().pullRequestUrl, targetBranch: 'main', mergeCommit: 'a'.repeat(40), mergedAt: '2026-10-28T01:00:00Z' });
-  f.ok('record', '--kind', 'merge', '--file', f.evidence + 'merge.json'); f.ok('advance', '--to', 'done');
-  assert.equal(f.state().stage, 'done'); assert.match(f.ok('issue-body'), /\[x\] done/);
+test('GitHub 필수 체크 누락을 설정 저장·기능 착수·PR 연결 전에 거부한다', t => {
+  const f = fixture(t);
+  const missing = { ...f.config, github: { ...f.config.github, requiredChecks: [] } };
+  f.write('missing-checks.json', missing);
+  f.bad(/github.requiredChecks/, 'configure', '--from', 'missing-checks.json');
+  f.write('frontend-harness.config.json', missing);
+  f.bad(/github.requiredChecks/, 'start', '--id', '42-search');
+  f.write('frontend-harness.config.json', f.config);
+  f.ready();
+  f.write('frontend-harness.config.json', missing);
+  f.bad(/github.requiredChecks/, 'advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
+  assert.equal(f.state().stage, 'ready');
 });
 
-test('현재 HEAD와 다른 CI 결과를 거부한다', t => {
+test('PR 단계에 이르러도 수기 CI·머지 JSON만으로 완료할 수 없다', t => {
+  const f = fixture(t); f.pr(); assert.equal(f.state().evidence.ci, undefined);
+  f.write(f.evidence + 'ci.json', { status: 'pass', headSha: f.git('rev-parse', 'HEAD'), runUrl: 'https://github.com/example/app/actions/runs/1' });
+  f.bad(/finalize/, 'record', '--kind', 'ci', '--file', f.evidence + 'ci.json');
+  f.write(f.evidence + 'merge.json', { merged: true, pullRequestUrl: f.state().pullRequestUrl, targetBranch: 'main', mergeCommit: 'a'.repeat(40), mergedAt: '2026-10-28T01:00:00Z' });
+  f.bad(/finalize/, 'record', '--kind', 'merge', '--file', f.evidence + 'merge.json');
+  f.bad(/finalize/, 'advance', '--to', 'done');
+  assert.equal(f.state().stage, 'pr');
+});
+
+test('기능을 머지한 새 체크아웃에서 수동 정리 없이 다음 기능을 시작한다', t => {
   const f = fixture(t); f.pr();
-  f.write(f.evidence + 'ci.json', { status: 'pass', headSha: 'b'.repeat(40), runUrl: 'https://github.com/example/app/actions/runs/2' });
-  f.bad(/현재 HEAD/, 'record', '--kind', 'ci', '--file', f.evidence + 'ci.json');
+  assert(!f.git('ls-files').includes(ACTIVE_STATE));
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'frontend-harness-merged-'));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const root = path.join(parent, 'checkout');
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: fs.existsSync(root) ? root : parent, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  git('clone', '--branch', 'main', f.root, root);
+  git('-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid', 'merge', '--no-ff', '-m', 'merge fixture', 'origin/codex/42-search');
+  assert(fs.existsSync(path.join(root, '.frontend-workflow/features/42-search/QA.md')));
+  assert(!fs.existsSync(path.join(root, ACTIVE_STATE)));
+  git('switch', '-c', 'codex/43-next');
+  const result = spawnSync(process.execPath, [cli, '--root', root, 'start', '--id', '43-next'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).id, '43-next');
+});
+
+test('통합 브랜치에 이미 들어간 구버전 ready 포인터가 새 기능을 막지 않는다', t => {
+  const f = fixture(t); f.ready(); f.write('.frontend-workflow/state.json', f.state());
+  f.git('add', '.'); f.git('add', '-f', '.frontend-workflow/state.json'); f.git('commit', '-m', 'legacy snapshot');
+  fs.unlinkSync(path.join(f.root, ACTIVE_STATE));
+  f.git('switch', 'main'); f.git('merge', '--no-ff', '-m', 'legacy merge', 'codex/42-search');
+  f.git('switch', '-c', 'codex/43-next');
+  assert.equal(JSON.parse(f.ok('start', '--id', '43-next')).id, '43-next');
+});
+
+test('복구는 같은 브랜치의 보관 기록을 복원하고 활성 작업을 덮어쓰지 않는다', t => {
+  const f = fixture(t); f.ready();
+  f.bad(/활성 기능/, 'restore', '--id', '42-search');
+  fs.unlinkSync(path.join(f.root, ACTIVE_STATE));
+  assert.equal(JSON.parse(f.ok('restore', '--id', '42-search')).stage, 'ready');
+  fs.unlinkSync(path.join(f.root, ACTIVE_STATE));
+  f.git('switch', '-c', 'codex/other');
+  f.bad(/브랜치/, 'restore', '--id', '42-search');
+});
+
+test('미적용 사유와 테스트가 있는 non-ui 작업만 로컬로 전달한다', t => {
+  const f = fixture(t, { github: { enabled: false }, qa: { allowNonUi: true } });
+  f.bad(/--reason/, 'start', '--id', '42-search', '--qa', 'non-ui');
+  f.ok('start', '--id', '42-search', '--qa', 'non-ui', '--reason', 'UI와 요청 계약이 바뀌지 않는 내부 순수 함수 수정');
+  f.approve(); f.ok('advance', '--to', 'implement'); f.ok('advance', '--to', 'review');
+  f.review(); f.ok('advance', '--to', 'qa');
+  f.bad(/test 검사/, 'advance', '--to', 'ready');
+  f.ok('run', 'all'); f.ok('advance', '--to', 'ready');
+  assert.match(f.report(), /해당 없음.*내부 순수 함수 수정/);
+  f.bad(/로컬 모드/, 'advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
+  assert.deepEqual(JSON.parse(f.ok('advance', '--to', 'delivered')), { stage: 'delivered', merged: false });
+});
+
+test('자동 검증이 필수일 때 직접 작성한 live 또는 자동화 JSON을 받지 않는다', t => {
+  const f = fixture(t, { requireLiveApi: true }); f.qa();
+  assert.throws(() => f.browser({ apiMode: 'live' }), /관측 결과/);
+  assert.throws(() => f.browser({ apiMode: 'live', automation: { fake: true } }), /browser-run/);
+  assert.equal(f.state().evidence.browser, undefined);
 });
 
 test('PR 단계의 로컬 진행 출력은 GitHub 동기화 블록과 같고 PR URL을 포함한다', t => {
-  const f = fixture(t, { github: { enabled: true, repository: 'example/app' } }); f.pr();
+  const f = fixture(t); f.pr();
   const output = f.ok('issue-body').trim();
   let body = '## 사용자 목적\n보존할 본문\n';
   let edits = 0;
@@ -356,11 +490,6 @@ test('PR 단계의 로컬 진행 출력은 GitHub 동기화 블록과 같고 PR 
   assert(output.includes(`PR: ${f.state().pullRequestUrl}`));
 });
 
-test('CodeRabbit 필수 모드에서는 실제 리뷰 기록 전 완료할 수 없다', t => {
-  const f = fixture(t, { codeRabbit: { required: true } }); f.pr();
-  f.bad(/CodeRabbit/, 'advance', '--to', 'done');
-});
-
 test('CodeRabbit 생략·다른 head·미해결 High를 통과시키지 않는다', t => {
   const f = fixture(t, { codeRabbit: { required: true } }); f.pr();
   const file = f.evidence + 'coderabbit.json';
@@ -370,14 +499,6 @@ test('CodeRabbit 생략·다른 head·미해결 High를 통과시키지 않는�
   f.write(file, { ...base, findings: [{ severity: 'high', status: 'accepted', detail: 'duplicate writes', reason: 'later' }] });
   f.bad(/Critical\/High/, 'record', '--kind', 'coderabbit', '--file', file);
   f.write(file, base); f.ok('record', '--kind', 'coderabbit', '--file', file);
-});
-
-test('코드가 같아도 새 HEAD의 CI가 필요하다', t => {
-  const f = fixture(t); f.pr();
-  f.write(f.evidence + 'ci.json', { status: 'pass', headSha: f.git('rev-parse', 'HEAD'), runUrl: 'https://github.com/example/app/actions/runs/3' });
-  f.ok('record', '--kind', 'ci', '--file', f.evidence + 'ci.json');
-  f.git('commit', '--allow-empty', '-m', 'test: new head');
-  assert.equal(JSON.parse(f.ok('status')).validEvidence.ci, false);
 });
 
 test('재기획은 승인과 검증을 지우고 이력을 보존한다', t => {
@@ -446,4 +567,80 @@ test('설치는 기존 앱 파일을 보존하고 설치 후 CLI가 독립 실�
   assert.equal(bundleCheck.status, 0, bundleCheck.stderr);
   const started = spawnSync(process.execPath, [installed, '--root', f.root, 'start', '--id', '42-search'], { encoding: 'utf8' });
   assert.equal(started.status, 0, started.stderr); assert.equal(install().status, 1);
+});
+
+test('설치 업데이트는 구버전의 검증 가능한 기준을 요구하고 사용자 파일과 이전 설치를 보존한다', t => {
+  const f = fixture(t); f.start();
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-release-baseline-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  for (const name of ['SKILL.md', 'README.md', 'docs', 'config', 'scripts', 'tests', 'examples', '.github', '.coderabbit.yaml', 'package.json', 'LICENSE']) fs.cpSync(path.join(source, name), path.join(base, name), { recursive: true });
+  const pkg = JSON.parse(fs.readFileSync(path.join(base, 'package.json'), 'utf8'));
+  fs.writeFileSync(path.join(base, 'package.json'), JSON.stringify({ ...pkg, version: '1.0.0' }));
+  const install = (bundle, ...args) => spawnSync(process.execPath, [path.join(bundle, 'scripts/install.mjs'), '--target', f.root, ...args], { encoding: 'utf8' });
+  assert.equal(install(base).status, 0);
+  const bundle = path.join(f.root, '.agents/skills/frontend-workflow-harness');
+  const manifest = path.join(bundle, '.harness-install.json');
+  fs.writeFileSync(path.join(base, 'package-lock.json'), '{}');
+  fs.writeFileSync(path.join(base, 'THIRD_PARTY_NOTICES.md'), '1.0 설치기가 복사하지 않은 파일');
+  const oldManifest = fs.readFileSync(manifest);
+  const preview = install(source, '--update', '--dry-run');
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(JSON.parse(preview.stdout).next, pkg.version);
+  assert.deepEqual(fs.readFileSync(manifest), oldManifest);
+  fs.unlinkSync(manifest);
+  assert.match(install(source, '--update').stderr, /--baseline/);
+  const oldReadme = fs.readFileSync(path.join(bundle, 'README.md'));
+  fs.appendFileSync(path.join(bundle, 'README.md'), '사용자가 바꾼 내용');
+  assert.match(install(source, '--update', '--baseline', base).stderr, /수정되거나 사라진/);
+  fs.writeFileSync(path.join(bundle, 'README.md'), oldReadme);
+  fs.writeFileSync(path.join(bundle, 'my-notes.md'), '사용자 메모');
+  const stateBefore = f.state();
+  const injected = '.frontend-workflow/runtime/interrupt-install.mjs';
+  f.write(injected, `import fs from 'node:fs';
+import path from 'node:path';
+const rename = fs.renameSync;
+const failure = process.env.HARNESS_TEST_INSTALL_FAILURE;
+fs.renameSync = (from, to) => {
+  if (failure === 'backup' && path.basename(to) === 'bundle') throw new Error('fixture backup move failed');
+  if (path.basename(from).startsWith('install-stage-') && path.basename(to) === 'frontend-workflow-harness') {
+    if (failure === 'activate') throw new Error('fixture activation failed');
+    process.exit(97);
+  }
+  return rename(from, to);
+};`);
+  const failSwap = failure => spawnSync(process.execPath, ['--import', pathToFileURL(path.join(f.root, injected)).href,
+    path.join(source, 'scripts/install.mjs'), '--target', f.root, '--update', '--baseline', base], {
+    encoding: 'utf8', env: { ...process.env, HARNESS_TEST_INSTALL_FAILURE: failure },
+  });
+  const journal = path.join(f.root, '.frontend-workflow/runtime/install-swap-codex.json');
+  for (const failure of ['backup', 'activate']) {
+    const result = failSwap(failure);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /fixture .* failed/);
+    assert(!fs.existsSync(journal));
+    assert.equal(fs.readFileSync(path.join(bundle, 'my-notes.md'), 'utf8'), '사용자 메모');
+    assert.equal(install(source, '--update', '--baseline', base, '--dry-run').status, 0);
+  }
+  const abort = failSwap('interrupt');
+  assert.equal(abort.status, 97, abort.stderr);
+  assert(!fs.existsSync(bundle));
+  assert(fs.existsSync(journal));
+  assert.match(install(source, '--update', '--baseline', base, '--dry-run').stderr, /미완료 교체/);
+  assert(fs.existsSync(journal));
+  assert.match(install(source, '--update', '--baseline', base).stderr, /lock/);
+  // spawnSync verified the owner exited, so follow the normal stale lock recovery.
+  fs.rmSync(path.join(f.root, '.frontend-workflow/.lock'), { recursive: true });
+  const update = install(source, '--update', '--baseline', base);
+  assert.equal(update.status, 0, update.stderr);
+  const report = JSON.parse(update.stdout);
+  assert.equal(report.recovered, true);
+  assert(!fs.existsSync(journal));
+  assert.equal(report.next, pkg.version);
+  assert(report.added.includes('package-lock.json'));
+  assert(!report.removed.includes('THIRD_PARTY_NOTICES.md'));
+  assert.equal(fs.readFileSync(path.join(bundle, 'my-notes.md'), 'utf8'), '사용자 메모');
+  assert.equal(fs.readFileSync(path.join(report.backup, 'my-notes.md'), 'utf8'), '사용자 메모');
+  assert.deepEqual(f.state(), stateBefore);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.root, 'frontend-harness.config.json'), 'utf8')), f.config);
+  assert.equal(JSON.parse(install(source, '--update').stdout).noop, true);
 });
