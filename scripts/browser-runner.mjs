@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inside, readJson, ensure, BROWSER_CHECKS } from './lib.mjs';
-import { METRICS, parseScenario, authorizeBrowserCredentials, pageUrl, matchRule, classifyResponse, summarizeApi } from './browser-scenario.mjs';
+import { METRICS, ScenarioError, parseScenario, authorizeBrowserCredentials, pageUrl, matchRule, classifyResponse, summarizeApi } from './browser-scenario.mjs';
 
 const readMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const apiTypes = new Set(['xhr', 'fetch']);
@@ -288,13 +288,22 @@ async function runPerformance(browser, cfg, storageState) {
   return { kind: 'navigation-lab', viewport, runs, settleMs, network: 'unthrottled', coldContext: true, browserCache: 'disabled-by-routing', pages: results, passed: results.every(page => page.passed) };
 }
 
+/** 실패 원인은 정제한 문구만 담아 성공 보고서와 같은 형식으로 전달한다. */
+function blockedReport(detail, config) {
+  return { url: config?.origin ?? 'http://localhost', browser: config?.engine ?? '실행 미확인', viewports: [], apiMode: 'unknown',
+    checks: Object.fromEntries(BROWSER_CHECKS.map(name => [name, { status: 'blocked', detail }])),
+    automation: { at: new Date().toISOString(), target: config?.target, error: detail } };
+}
+
 /** 자격 증명 정책을 확인한 뒤 브라우저를 열고 실패 시 민감 정보가 없는 결과를 반환한다. */
 export async function runBrowser({ root, input, widths, mode = 'qa' }) {
-  const config = parseScenario(input, widths, mode);
+  let config;
   let browser;
-  let phase = '브라우저 자격 증명 승인';
+  let phase = '브라우저 시나리오 설정';
   const at = new Date().toISOString();
   try {
+    config = parseScenario(input, widths, mode);
+    phase = '브라우저 자격 증명 승인';
     config.usesCredentials = authorizeBrowserCredentials(config, process.env.FRONTEND_HARNESS_BROWSER_AUTH);
     const storageState = readStorageState(root, config);
     phase = 'Playwright 브라우저 시작';
@@ -308,26 +317,35 @@ export async function runBrowser({ root, input, widths, mode = 'qa' }) {
     return { url: config.origin, browser: browserName, viewports: qa?.viewports ?? [], apiMode: qa?.api.mode ?? 'unknown',
       checks: qa?.checks ?? {}, automation: { at, target: config.target, api: qa?.api, scenarios: qa?.results,
         network: qa ? { blocked: qa.blocked, errors: qa.errors, apiByViewport: qa.apiByViewport, observations: qa.observations } : undefined, performance } };
-  } catch {
-    const detail = phase + ' 실패. 대상 앱 상태, Playwright 패키지·브라우저, 테스트 인증 설정을 확인';
-    return { url: config.origin, browser: config.engine, viewports: [], apiMode: 'unknown',
-      checks: Object.fromEntries(BROWSER_CHECKS.map(name => [name, { status: 'blocked', detail }])),
-      automation: { at, target: config.target, error: detail } };
+  } catch (error) {
+    const detail = error instanceof ScenarioError
+      ? phase + ' 실패. ' + error.message
+      : phase + ' 실패. 해당 단계의 설정과 실행 환경을 확인';
+    return blockedReport(detail, config);
   } finally {
     if (browser) await browser.close();
   }
 }
 
+/** 시나리오 파일 읽기 오류의 원문을 출력하지 않고 검증 보고서를 반환한다. */
+async function main() {
+  const { values } = parseArgs({ options: { root: { type: 'string' }, from: { type: 'string' }, widths: { type: 'string', default: '[1280]' }, mode: { type: 'string', default: 'qa' } } });
+  ensure(['qa', 'performance'].includes(values.mode), '--mode qa|performance 필요');
+  const root = fs.realpathSync(path.resolve(values.root || process.cwd()));
+  const scenario = inside(root, values.from);
+  let input;
+  let report;
+  try { input = readJson(scenario); }
+  catch (error) { report = blockedReport(error instanceof SyntaxError ? '브라우저 시나리오 JSON 구문 오류' : '브라우저 시나리오 파일 읽기 실패'); }
+  report ??= await runBrowser({ root, input, widths: JSON.parse(values.widths), mode: values.mode });
+  console.log(JSON.stringify(report));
+  if (report.automation.error || (values.mode === 'performance' && !report.automation.performance?.passed)) process.exitCode = 1;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const { values } = parseArgs({ options: { root: { type: 'string' }, from: { type: 'string' }, widths: { type: 'string', default: '[1280]' }, mode: { type: 'string', default: 'qa' } } });
-    ensure(['qa', 'performance'].includes(values.mode), '--mode qa|performance 필요');
-    const root = fs.realpathSync(path.resolve(values.root || process.cwd()));
-    const report = await runBrowser({ root, input: readJson(inside(root, values.from)), widths: JSON.parse(values.widths), mode: values.mode });
-    console.log(JSON.stringify(report));
-    if (values.mode === 'performance' && !report.automation.performance?.passed) process.exitCode = 1;
-  } catch (error) {
-    console.error('브라우저 시나리오 오류: ' + error.message);
+  try { await main(); }
+  catch {
+    console.error('브라우저 실행기 인자 또는 실행 환경 오류');
     process.exitCode = 1;
   }
 }

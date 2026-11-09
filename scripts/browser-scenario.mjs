@@ -1,4 +1,10 @@
-import { ensure, nonempty } from './lib.mjs';
+import { nonempty } from './lib.mjs';
+
+/** 이 모듈의 고정 문구만 비밀값을 제외한 실행 보고서에 전달한다. */
+export class ScenarioError extends Error {}
+function ensure(condition, message) {
+  if (!condition) throw new ScenarioError(message);
+}
 
 export const METRICS = ['ttfbMs', 'fcpMs', 'lcpMs', 'cls', 'loadMs'];
 const AREAS = ['journey', 'states', 'keyboard'];
@@ -13,6 +19,7 @@ const loopback = origin => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(
 
 /** 자격 증명이나 경로가 섞이지 않은 HTTP(S) 주소를 비교 가능한 origin으로 정규화한다. */
 export function webOrigin(value) {
+  ensure(typeof value === 'string' && URL.canParse(value), '유효한 HTTP(S) origin 필요');
   const url = new URL(value);
   ensure(['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash, 'HTTP(S) origin만 입력');
   return url.origin;

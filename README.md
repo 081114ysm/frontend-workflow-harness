@@ -52,6 +52,8 @@ node scripts/install.mjs --target /path/to/frontend-app --update
 
 관리 파일을 직접 수정했거나 새 파일 이름이 기존 파일과 충돌하면 업데이트를 중단한다. 앱 설정·기능 상태·번들의 사용자 추가 파일을 보존하고, 교체 전 번들은 `.frontend-workflow/runtime/install-backup-*/bundle`에 저장한다. 업데이트 성공 출력의 백업 경로를 보관한다. 이전 번들로 복구할 때는 현재 번들을 별도 경로에 보관한 뒤 백업 폴더를 같은 설치 경로로 옮긴다. 관리 매니페스트가 없는 1.0 설치는 당시 배포 원본 경로를 `--baseline /path/to/original-harness`로 함께 지정해 일치 여부를 먼저 확인한다.
 
+업데이트 도중 프로세스가 종료됐다면 [잠금 복구 절차](docs/rules/progress.md)에 따라 종료된 실행의 잠금을 확인한다. 이후 같은 `--update` 명령을 다시 실행하면 미완료 교체의 이전 설치본을 자동 복원한 뒤 업데이트를 이어간다.
+
 **이후 명령은 대상 앱의 루트에서 실행한다.**
 
 ```sh

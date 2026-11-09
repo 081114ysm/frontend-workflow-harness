@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { ACTIVE_STATE, BROWSER_CHECKS, fingerprint, inside, validateConfig } from '../scripts/lib.mjs';
 import { githubWorkflow } from '../scripts/github-lib.mjs';
@@ -166,6 +166,22 @@ test('깨진 브라우저 JSON도 거부 기록을 남기며 이전 통과 기�
   assert(!f.report().includes('[evidence/broken.json]'));
   assert.match(f.report(), /거부 이유: 브라우저 보고서 JSON 형식 오류/);
   assert.match(f.report(), /QA 완료 조건: \*\*미충족\*\*/);
+});
+
+test('실행기 설정 오류를 QA에 남기되 시나리오의 원문과 비밀값은 남기지 않는다', t => {
+  const f = fixture(t);
+  const secret = 'SYNTHETIC_SECRET_NOT_FOR_REPORT';
+  f.write('bad-json.json', '{"password":"' + secret + '" invalid}');
+  f.write('bad-schema.json', { schemaVersion: 0, password: secret });
+  f.ready();
+  for (const [file, reason] of [['bad-json.json', /시나리오 JSON 구문 오류/], ['bad-schema.json', /시나리오 schemaVersion: 1 필요/]]) {
+    f.browser();
+    const result = f.bad(reason, 'browser-run', '--from', file);
+    assert(!result.stderr.includes(secret));
+    assert.equal(f.state().evidence.browser, undefined);
+    assert.match(f.report(), reason);
+    assert(!f.report().includes(secret));
+  }
 });
 
 test('빈 파일과 없는 브라우저 보고서도 이전 통과를 무효화하고 QA 문서에 남긴다', t => {
@@ -528,9 +544,30 @@ test('설치 업데이트는 구버전의 검증 가능한 기준을 요구하�
   fs.writeFileSync(path.join(bundle, 'README.md'), oldReadme);
   fs.writeFileSync(path.join(bundle, 'my-notes.md'), '사용자 메모');
   const stateBefore = f.state();
+  const injected = '.frontend-workflow/runtime/interrupt-install.mjs';
+  f.write(injected, `import fs from 'node:fs';
+import path from 'node:path';
+const rename = fs.renameSync;
+fs.renameSync = (from, to) => {
+  if (path.basename(from).startsWith('install-stage-') && path.basename(to) === 'frontend-workflow-harness') process.exit(97);
+  return rename(from, to);
+};`);
+  const abort = spawnSync(process.execPath, ['--import', pathToFileURL(path.join(f.root, injected)).href,
+    path.join(source, 'scripts/install.mjs'), '--target', f.root, '--update', '--baseline', base], { encoding: 'utf8' });
+  assert.equal(abort.status, 97, abort.stderr);
+  assert(!fs.existsSync(bundle));
+  const journal = path.join(f.root, '.frontend-workflow/runtime/install-swap-codex.json');
+  assert(fs.existsSync(journal));
+  assert.match(install(source, '--update', '--baseline', base, '--dry-run').stderr, /미완료 교체/);
+  assert(fs.existsSync(journal));
+  assert.match(install(source, '--update', '--baseline', base).stderr, /lock/);
+  // spawnSync verified the owner exited, so follow the normal stale lock recovery.
+  fs.rmSync(path.join(f.root, '.frontend-workflow/.lock'), { recursive: true });
   const update = install(source, '--update', '--baseline', base);
   assert.equal(update.status, 0, update.stderr);
   const report = JSON.parse(update.stdout);
+  assert.equal(report.recovered, true);
+  assert(!fs.existsSync(journal));
   assert.equal(report.next, pkg.version);
   assert(report.added.includes('package-lock.json'));
   assert(!report.removed.includes('THIRD_PARTY_NOTICES.md'));

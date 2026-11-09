@@ -141,6 +141,7 @@ function recordEvidence(root, state, config, options, automated = false) {
     if (kind === 'browser') {
       ensure(automated || !report?.automation, '자동 검증 결과는 browser-run으로만 기록');
       ensure(automated || !(config.requireLiveApi || config.qa?.automationRequired), '실제 API/자동 QA가 필수인 프로젝트는 browser-run의 관측 결과 필요');
+      if (automated && report?.automation?.error) fail(report.automation.error);
     }
     extra = validateReport(root, state, config, kind, report);
   } catch (error) {
@@ -175,11 +176,17 @@ function runBrowser(root, state, config, options) {
     cwd: root, encoding: 'utf8', shell: false, timeout: 300000, maxBuffer: 4 * 1024 * 1024,
   });
   let report;
-  if (child.status === 0 && !child.error) {
-    try { report = JSON.parse(child.stdout); } catch { /* use the blocked report below */ }
+  if ([0, 1].includes(child.status) && !child.error) {
+    try {
+      const result = JSON.parse(child.stdout);
+      if (child.status === 0 || result?.automation?.error) report = result;
+    } catch { /* use the blocked report below */ }
   }
   if (!report || before !== fingerprint(root)) {
-    const detail = report ? '실행 중 코드·시나리오가 변경됨' : '브라우저 실행기 실패 또는 시간 초과';
+    let detail = '브라우저 실행기 종료 또는 보고서 생성 실패';
+    if (report) detail = '실행 중 코드·시나리오가 변경됨';
+    else if (child.error?.code === 'ETIMEDOUT') detail = '브라우저 실행기 시간 초과';
+    else if (child.error?.code === 'ENOBUFS') detail = '브라우저 실행기 보고서 크기 초과';
     report = { url: 'http://localhost', browser: '실행 미확인', apiMode: 'unknown', viewports: [],
       checks: Object.fromEntries(BROWSER_CHECKS.map(name => [name, { status: 'blocked', detail }])), automation: { error: detail } };
   }

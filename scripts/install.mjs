@@ -75,8 +75,32 @@ function copyFiles(source, target, files) {
   }
 }
 
+/** 중단된 교체가 남긴 백업을 확인하고 설치 경로가 비었을 때만 복구한다. */
+function recoverSwap(root, target, journal) {
+  const record = fs.lstatSync(journal, { throwIfNoEntry: false });
+  if (!record) return false;
+  ensure(record.isFile() && fs.realpathSync(journal) === journal, '교체 복구 기록은 일반 파일이어야 함');
+  const { backupName, stagingName } = readJson(journal);
+  ensure(/^install-backup-[a-zA-Z0-9]{6}$/.test(backupName) && /^install-stage-[a-zA-Z0-9]{6}$/.test(stagingName), '교체 복구 기록 형식 오류');
+  const backup = inside(root, `.frontend-workflow/runtime/${backupName}/bundle`);
+  const staging = inside(root, `.frontend-workflow/runtime/${stagingName}`);
+  const installed = fs.lstatSync(target, { throwIfNoEntry: false });
+  ensure(!installed || installed.isDirectory(), '기존 설치 경로가 바뀌어 교체를 복구할 수 없음');
+  if (!installed) {
+    ensure(fs.lstatSync(backup, { throwIfNoEntry: false })?.isDirectory() && fs.realpathSync(backup) === backup, '교체 복구용 기존 번들을 찾을 수 없음');
+    fs.renameSync(backup, target);
+  }
+  const staged = fs.lstatSync(staging, { throwIfNoEntry: false });
+  if (staged) {
+    ensure(staged.isDirectory() && fs.realpathSync(staging) === staging, '교체 준비 디렉터리가 바뀜');
+    fs.rmSync(staging, { recursive: true });
+  }
+  fs.unlinkSync(journal);
+  return !installed;
+}
+
 /** 검증된 새 번들을 한 번에 노출하고 교체 실패 시 이전 번들로 복구한다. */
-function applyPlan(root, source, target, next, updates) {
+function applyPlan(root, source, target, next, updates, journal) {
   const { current, ...details } = updates;
   if (updates.noop) return { installed: target, ...details };
   const runtime = inside(root, '.frontend-workflow/runtime');
@@ -94,6 +118,7 @@ function applyPlan(root, source, target, next, updates) {
       const latest = inventory(target, fs.readdirSync(target).sort());
       ensure(JSON.stringify(latest) === JSON.stringify(current), '업데이트 중 설치본이 변경됨');
       backup = path.join(fs.mkdtempSync(path.join(runtime, 'install-backup-')), 'bundle');
+      writeJson(journal, { backupName: path.basename(path.dirname(backup)), stagingName: path.basename(staging) });
       fs.renameSync(target, backup);
     } else ensure(!fs.lstatSync(target, { throwIfNoEntry: false }), '설치 중 대상 경로가 생김');
     try { fs.renameSync(staging, target); }
@@ -104,6 +129,7 @@ function applyPlan(root, source, target, next, updates) {
       }
       throw error;
     }
+    if (backup) fs.unlinkSync(journal);
     return { installed: target, ...details, backup: backup ?? null };
   } finally { fs.rmSync(staging, { recursive: true, force: true }); }
 }
@@ -116,6 +142,7 @@ try {
   const source = fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
   const relative = (values.host === 'claude' ? '.claude' : '.agents') + '/skills/frontend-workflow-harness';
   const target = inside(root, relative);
+  const journal = inside(root, `.frontend-workflow/runtime/install-swap-${values.host}.json`);
   ensure(source !== target && !source.startsWith(target + path.sep), '업데이트할 설치본과 다른 배포 원본에서 실행');
   ensure(!values.baseline || values.update, '--baseline은 --update에서만 사용');
   const next = bundleAt(source);
@@ -131,8 +158,13 @@ try {
   };
   let result;
   if (values['dry-run']) {
+    ensure(!fs.lstatSync(journal, { throwIfNoEntry: false }), '미완료 교체가 있음. 실제 --update로 복구한 뒤 미리보기 가능');
     const { current, ...details } = plan();
     result = { dryRun: true, target, ...details };
-  } else result = withLock(root, () => applyPlan(root, source, target, next, plan()));
+  } else result = withLock(root, () => {
+    ensure(values.update || !fs.lstatSync(journal, { throwIfNoEntry: false }), '미완료 교체가 있음. --update로 복구');
+    const recovered = recoverSwap(root, target, journal);
+    return { ...applyPlan(root, source, target, next, plan(), journal), ...(recovered ? { recovered: true } : {}) };
+  });
   console.log(JSON.stringify(result, null, 2));
 } catch (error) { console.error('설치 오류: ' + error.message); process.exitCode = 1; }
