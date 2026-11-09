@@ -158,7 +158,9 @@ export function authorizeLiveUpstreams(config, policyJson) {
   const upstreams = config.apiRules.filter(rule => rule.verification === 'upstream');
   if (!upstreams.length) return;
   ensure(policyJson, '직접 API 전달은 실행자의 FRONTEND_HARNESS_LIVE_UPSTREAMS 정책 필요');
-  const entries = JSON.parse(policyJson);
+  let entries;
+  try { entries = JSON.parse(policyJson); }
+  catch { throw new ScenarioError('FRONTEND_HARNESS_LIVE_UPSTREAMS 정책의 JSON 형식 오류'); }
   ensure(list(entries, 40), '실제 API 승인 정책은 origin/pathPrefix 배열 필요');
   const approved = new Set(entries.map(entry => {
     const origin = webOrigin(entry?.origin);

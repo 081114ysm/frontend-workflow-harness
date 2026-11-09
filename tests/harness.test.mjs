@@ -570,6 +570,7 @@ test('브라우저 초기화는 앱 URL과 패키지 관리자에 맞는 초안�
   const report = JSON.parse(f.ok('browser-init', '--url', 'http://localhost:5173/orders?q=open', '--engine', 'firefox'));
   assert.equal(report.scenario, 'qa/browser.json');
   assert.deepEqual(report.install, [['pnpm', 'add', '-D', 'playwright'], ['pnpm', 'exec', 'playwright', 'install', 'firefox']]);
+  assert.deepEqual(report.smoke.slice(2), ['--root', fs.realpathSync(f.root), '--from', 'qa/browser.json', '--mode', 'performance']);
   const file = path.join(f.root, report.scenario);
   const draft = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(draft.baseUrl, 'http://localhost:5173');

@@ -74,7 +74,7 @@ function initBrowser(root, options) {
   fs.writeFileSync(file, JSON.stringify(draft, null, 2) + '\n', { flag: 'wx' });
   return { scenario: relative, target, engine, playwright: setup.browserPackages,
     install: [...(setup.browserPackages.length ? [] : [[...add[manager], 'playwright']]), [...run[manager], 'playwright', 'install', engine]],
-    smoke: [process.execPath, path.join(bundle, 'scripts/browser-runner.mjs'), '--from', relative, '--mode', 'performance'],
+    smoke: [process.execPath, path.join(bundle, 'scripts/browser-runner.mjs'), '--root', root, '--from', relative, '--mode', 'performance'],
     next: production ? '승인된 페이지를 준비한 뒤 측정 명령 실행' : '페이지 탐색을 확인한 뒤 실제 인수 조건에 맞춰 cases와 API 규칙을 채울 것',
   };
 }

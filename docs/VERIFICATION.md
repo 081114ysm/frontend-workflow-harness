@@ -12,7 +12,7 @@ Node 내장 test runner만 사용한다. 임시 디렉터리에서 테스트용 
 
 ```sh
 npm ci
-npx playwright install chromium
+npx playwright install chromium firefox webkit
 npm run test:browser
 ```
 
@@ -61,6 +61,8 @@ CodeRabbit 검토 후 로컬 기본 검증 69개와 실제 Chromium 검증 4개�
 ## 1.2 브라우저 검증
 
 macOS에서 기본 검증 77개를 통과했다. 브라우저 통합 검증은 Chromium 6개, Firefox 5개, WebKit 5개가 통과했다. 공통 검사는 화면 조작·뷰포트, API 출처, 운영 모드의 쓰기 차단·다른 URL 거부, 인증 입력 대상 제한을 확인한다. MSW 검사는 Chromium에서 실제 서비스 워커를 실행하고 Mock 응답 표식 누락을 거부하는지 확인했다. Firefox·WebKit에서는 이 Chromium 전용 검사만 제외한다.
+
+PR #4의 `40989d4`에서 Windows Node 24 기본 검증과 Windows·Ubuntu의 브라우저 6개 작업이 모두 통과했다. Windows 검사에는 프로젝트에서 설정한 npm 명령의 실제 실행도 포함된다. [플랫폼별 CI 결과](https://github.com/081114ysm/frontend-workflow-harness/actions/runs/42571893637)
 
 별도 실서버 헤더가 없는 로컬 테스트 API도 세 엔진에서 확인했다. 실행자 승인이 없으면 서버에 요청이 가지 않았고, 승인된 실행에서는 서버에 한 번 도달했다. 승인된 API가 리다이렉트했을 때는 결과가 `unknown`이었으며 리다이렉트 목적지에 요청이 가지 않았다.
 

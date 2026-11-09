@@ -78,6 +78,9 @@ test('직접 전달은 시나리오 밖에서 승인한 정확한 API 경로만 
   const upstream = { ...live, verification: 'upstream', proof: null };
   const config = { apiRules: [upstream] };
   assert.throws(() => authorizeLiveUpstreams(config), /정책 필요/);
+  assert.throws(() => authorizeLiveUpstreams(config, '{"secret":"do-not-print" invalid}'), {
+    message: 'FRONTEND_HARNESS_LIVE_UPSTREAMS 정책의 JSON 형식 오류',
+  });
   const approve = pathPrefix => JSON.stringify([{ origin: live.origin, pathPrefix }]);
   assert.throws(() => authorizeLiveUpstreams(config, approve('/api')), /origin과 경로/);
   assert.doesNotThrow(() => authorizeLiveUpstreams(config, approve(live.prefix)));
