@@ -6,12 +6,13 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inside, readJson, ensure, BROWSER_CHECKS } from './lib.mjs';
-import { METRICS, parseScenario, pageUrl, matchRule, classifyResponse, summarizeApi } from './browser-scenario.mjs';
+import { METRICS, parseScenario, authorizeBrowserCredentials, pageUrl, matchRule, classifyResponse, summarizeApi } from './browser-scenario.mjs';
 
 const readMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const apiTypes = new Set(['xhr', 'fetch']);
 const stepResult = (passed, detail) => ({ status: passed ? 'pass' : 'fail', detail });
 
+/** 대상 앱에서 설치한 Playwright 패키지를 찾아 해당 앱의 버전으로 실행한다. */
 function playwrightAt(root) {
   const require = createRequire(path.join(root, 'package.json'));
   for (const name of ['playwright', '@playwright/test']) {
@@ -22,6 +23,7 @@ function playwrightAt(root) {
   throw new Error('대상 프로젝트에 playwright 또는 @playwright/test 설치 필요');
 }
 
+/** 사용자에게 보이는 이름이나 테스트 ID로 요소를 찾고 명시한 CSS 선택자도 지원한다. */
 function locate(page, spec) {
   if (spec.testId) return page.getByTestId(spec.testId);
   if (spec.label) return page.getByLabel(spec.label, { exact: true });
@@ -29,19 +31,57 @@ function locate(page, spec) {
   return page.locator(spec.selector);
 }
 
-async function runStep(page, origin, step, timeout) {
+/**
+ * 문서를 고정해 승인된 origin의 입력 요소에만 비밀값을 전달한다.
+ * 탐색 중 요소가 사라져도 새 문서의 요소를 다시 찾지 않는다.
+ */
+async function fillCredential(target, origin, name, timeout) {
+  const element = await target.elementHandle({ timeout });
+  try {
+    await element.waitForElementState('editable', { timeout });
+    const actualOrigin = await element.evaluate(() => window.location.origin);
+    ensure(actualOrigin === origin, '입력 요소의 실제 origin이 승인된 대상과 다름');
+    const value = process.env[name];
+    ensure(value !== undefined, '입력용 환경변수가 설정되지 않음');
+    await element.evaluate((node, { origin, value }) => {
+      if (window.location.origin !== origin || !node.isConnected) throw new Error('승인된 입력 문서가 바뀜');
+      const prototype = node instanceof HTMLInputElement && ['text', 'password', 'email', 'search', 'tel', 'url'].includes(node.type)
+        ? HTMLInputElement.prototype : node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : null;
+      if (!prototype) throw new Error('자격 증명은 텍스트 입력 요소에만 사용 가능');
+      Object.getOwnPropertyDescriptor(prototype, 'value').set.call(node, value);
+      node.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }, { origin, value });
+  } finally {
+    await element.dispose();
+  }
+}
+
+/** 승인된 로그인 상태에서 다른 호스트에 공유되는 쿠키와 미승인 웹 저장소를 거부한다. */
+function readStorageState(root, config) {
+  if (!config.storageStateEnv) return undefined;
+  const relative = process.env[config.storageStateEnv];
+  ensure(relative, '승인된 로그인 상태 파일 경로 필요');
+  const state = readJson(inside(root, relative));
+  const hosts = new Set([...config.origins].map(origin => new URL(origin).hostname));
+  ensure(Array.isArray(state?.cookies) && state.cookies.every(cookie => hosts.has(cookie?.domain)), '로그인 상태에 공유 도메인 또는 미승인 도메인 쿠키가 있음');
+  ensure(Array.isArray(state.origins) && state.origins.every(entry => config.origins.has(entry?.origin)), '로그인 상태에 미승인 웹 저장소 origin이 있음');
+  return state;
+}
+
+/** 실제 DOM에서 단계 하나를 실행한다. 자격 증명이 있는 세션에서는 탐색 목적지도 확인한다. */
+async function runStep(page, config, step) {
+  const { origin, timeoutMs: timeout } = config;
   if (step.action === 'goto') {
     const response = await page.goto(pageUrl(origin, step.path), { waitUntil: 'load', timeout });
     ensure(response?.ok(), '문서 응답 실패');
+    ensure(!config.usesCredentials || new URL(page.url()).origin === origin, '탐색이 승인된 origin을 벗어남');
     return;
   }
   const target = step.locator ? locate(page, step.locator) : null;
   if (step.action === 'click') return target.click({ timeout });
-  if (step.action === 'fill') {
-    const value = step.env ? process.env[step.env] : step.value;
-    ensure(value !== undefined, '입력용 환경변수가 설정되지 않음');
-    return target.fill(value, { timeout });
-  }
+  if (step.action === 'fill') return step.env
+    ? fillCredential(target, origin, step.env, timeout)
+    : target.fill(step.value, { timeout });
   if (step.action === 'press') return target ? target.press(step.key, { timeout }) : page.keyboard.press(step.key);
   await target.waitFor({ state: 'visible', timeout });
   if (step.action === 'visible') return;
@@ -56,6 +96,7 @@ async function runStep(page, origin, step, timeout) {
   throw new Error('assertion 불일치');
 }
 
+/** 브라우저 컨텍스트에 요청 제한, fixture와 민감 값을 제외한 관측을 설치한다. */
 async function makeContext(browser, cfg, width, storageState, fixtures) {
   const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', ...(storageState ? { storageState } : {}) });
   const ledger = { requests: new Set(), fulfilled: new WeakSet(), observations: [], blocked: 0, errors: 0 };
@@ -100,7 +141,17 @@ async function makeContext(browser, cfg, width, storageState, fixtures) {
       ledger.fulfilled.add(request);
       return route.fulfill({ status: fixture.status, json: fixture.body });
     });
-    if (cfg.target === 'production') await context.routeWebSocket('**/*', socket => { ledger.blocked++; return socket.close(); });
+    if (cfg.target === 'production' || cfg.usesCredentials) {
+      await context.routeWebSocket('**/*', socket => {
+        const origin = new URL(socket.url().replace(/^ws/, 'http')).origin;
+        if (cfg.target !== 'production' && cfg.origins.has(origin)) {
+          socket.connectToServer();
+          return;
+        }
+        ledger.blocked++;
+        return socket.close();
+      });
+    }
     return { context, ledger };
   } catch (error) {
     await context.close();
@@ -108,6 +159,7 @@ async function makeContext(browser, cfg, width, storageState, fixtures) {
   }
 }
 
+/** 각 뷰포트를 별도 컨텍스트에서 실행해 해당 너비의 화면·API 결과를 검증한다. */
 async function runCases(browser, cfg, storageState) {
   const results = []; const viewports = []; const observations = [];
   const apiByViewport = [];
@@ -119,7 +171,7 @@ async function runCases(browser, cfg, storageState) {
       for (const item of cfg.cases) {
         let completed = 0; let failedAction = null;
         for (const step of item.steps) {
-          try { await runStep(page, cfg.origin, step, cfg.timeoutMs); completed++; }
+          try { await runStep(page, cfg, step); completed++; }
           catch { failedAction = step.action; break; } // Exceptions may contain credentials and selectors.
         }
         const layout = await page.evaluate(() => ({ viewport: innerWidth, content: document.documentElement.scrollWidth }));
@@ -155,6 +207,7 @@ async function runCases(browser, cfg, storageState) {
   } };
 }
 
+/** 페이지 탐색 전에 설치해 렌더링 지표와 가장 큰 레이아웃 이동 구간을 기록한다. */
 function observePaint() {
   const observed = { lcpMs: null, cls: null };
   window.__frontendHarnessPaint = observed;
@@ -185,6 +238,7 @@ function observePaint() {
   };
 }
 
+/** 수집 대기 중 남은 관측을 반영하고 브라우저가 제공하지 않는 지표는 null로 반환한다. */
 function sampleMetrics() {
   window.__frontendHarnessFlushPaint?.();
   const nav = performance.getEntriesByType('navigation')[0];
@@ -197,6 +251,7 @@ function sampleMetrics() {
   };
 }
 
+/** 반복 표본의 중앙값을 비교한다. 필수 지표 표본이 누락되면 예산 검사를 실패시킨다. */
 export function measureBudget(samples, budgets, runs) {
   const metrics = Object.fromEntries(METRICS.map(metric => {
     const values = samples.map(sample => sample[metric]).filter(value => Number.isFinite(value) && value >= 0).sort((a, b) => a - b);
@@ -208,6 +263,7 @@ export function measureBudget(samples, budgets, runs) {
   return { metrics, passed: samples.length === runs && Object.values(metrics).every(metric => metric.passed !== false) };
 }
 
+/** 페이지마다 새 컨텍스트에서 실제 탐색을 반복한다. 하네스 fixture는 사용하지 않는다. */
 async function runPerformance(browser, cfg, storageState) {
   const { pages, viewport, runs, settleMs } = cfg.performance;
   const results = [];
@@ -232,16 +288,17 @@ async function runPerformance(browser, cfg, storageState) {
   return { kind: 'navigation-lab', viewport, runs, settleMs, network: 'unthrottled', coldContext: true, browserCache: 'disabled-by-routing', pages: results, passed: results.every(page => page.passed) };
 }
 
+/** 자격 증명 정책을 확인한 뒤 브라우저를 열고 실패 시 민감 정보가 없는 결과를 반환한다. */
 export async function runBrowser({ root, input, widths, mode = 'qa' }) {
   const config = parseScenario(input, widths, mode);
   let browser;
-  let phase = 'Playwright 브라우저 시작';
+  let phase = '브라우저 자격 증명 승인';
   const at = new Date().toISOString();
   try {
+    config.usesCredentials = authorizeBrowserCredentials(config, process.env.FRONTEND_HARNESS_BROWSER_AUTH);
+    const storageState = readStorageState(root, config);
+    phase = 'Playwright 브라우저 시작';
     const playwright = playwrightAt(root);
-    const storageFile = config.storageStateEnv ? process.env[config.storageStateEnv] : undefined;
-    ensure(!config.storageStateEnv || storageFile, 'storageStateEnv 경로 필요');
-    const storageState = storageFile ? inside(root, storageFile) : undefined;
     browser = await playwright[config.engine].launch({ headless: true });
     const browserName = config.engine + ' ' + browser.version();
     phase = '브라우저 시나리오 실행';

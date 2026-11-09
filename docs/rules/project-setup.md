@@ -32,7 +32,7 @@ node scripts/harness.mjs configure --from frontend-harness.config.json
 | requireLiveApi | 이번 앱에서 실제 API 연동을 PR 필수 조건으로 삼을지 |
 | requireCi | CI 필수 여부. false여도 'CI 통과'라고 보고할 수는 없음 |
 | github | 기본 GitHub 모드 여부와 실제 owner/repo. 로컬 전용이면 enabled: false |
-| github.requiredChecks | `requireCi: true`인 GitHub 모드의 필수 check run 이름과 GitHub App slug |
+| github.requiredChecks | `requireCi: true`인 GitHub 모드의 필수 check run 이름과 GitHub App slug. 기능 착수와 PR 생성 전에 확인한다 |
 | qa.allowNonUi | 화면에 영향이 없는 작업에서 실제 test 검사와 리뷰로 QA할지 |
 | qa.automationRequired | 화면 QA에 수기 보고서 대신 `browser-run` 증거를 요구할지 |
 | codeRabbit.required | 현재 PR head의 실제 CodeRabbit 리뷰를 완료 조건으로 삼을지 |

@@ -59,6 +59,7 @@ export function git(root, args, optional = false) {
   return result.stdout.trim();
 }
 
+/** 설정의 형식과 지원 옵션을 검증한다. 기존 설정도 읽을 수 있도록 원격 진입 조건과 분리한다. */
 export function validateConfig(config) {
   ensure(config.schemaVersion === 1 && config.configured === true, '설정 예시를 실제 값으로 바꾸고 configured: true를 지정해야 함');
   for (const key of ['project', 'integrationBranch', 'defaultBranch', 'branchPrefix']) {
@@ -98,6 +99,14 @@ export function validateConfig(config) {
 
 export function loadConfig(root) { return validateConfig(readJson(inside(root, CONFIG))); }
 
+/** GitHub CI의 필수 체크가 비어 있으면 기능 시작과 원격 PR 작업 전에 거부한다. */
+export function requiredGithubChecks(config) {
+  if (!config.github?.enabled || !config.requireCi) return [];
+  const checks = config.github.requiredChecks;
+  ensure(checks?.length, 'github.requiredChecks에 실제 필수 검사 이름과 앱을 설정할 것');
+  return checks;
+}
+
 export function sourceFiles(root) {
   const result = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' });
   ensure(result.status === 0, '먼저 Git 저장소를 초기화해야 함');
@@ -128,12 +137,14 @@ export function featureDirectory(state) { return `${STATE_DIR}/features/${state.
 export function planHash(root, state) { return sha(fs.readFileSync(inside(root, state.plan))); }
 export function configHash(root) { return sha(fs.readFileSync(inside(root, CONFIG))); }
 
+/** 읽은 기능 상태의 ID와 기획 경로가 서로 일치하는지 확인한다. */
 function validatedState(state) {
   ensure(state?.schemaVersion === 1 && /^[a-z0-9][a-z0-9-]{0,79}$/.test(state.id) && (STAGES.includes(state.stage) || terminal(state)), '상태 파일 형식이 올바르지 않음');
   ensure(state.plan === `${featureDirectory(state)}/plan.md`, '기획서 경로가 상태와 일치하지 않음');
   return state;
 }
 
+/** 현재 활성 상태를 읽는다. 통합 브랜치의 구버전 스냅샷은 이력으로 취급한다. */
 export function activeState(root, config = loadConfig(root)) {
   const active = inside(root, ACTIVE_STATE);
   if (fs.existsSync(active)) return validatedState(readJson(active));
@@ -152,6 +163,7 @@ export function loadState(root) {
   return state;
 }
 
+/** 원래 기능 브랜치에서 보관 상태를 복구한다. 진행 중인 다른 기능은 보존한다. */
 export function restoreState(root, config, id) {
   ensure(/^[a-z0-9][a-z0-9-]{0,79}$/.test(id || ''), '--id: 소문자/숫자/하이픈 필요');
   const current = activeState(root, config);
@@ -239,6 +251,7 @@ export function evidenceFile(root, state, relative) {
   return { path: relative, hash: sha(fs.readFileSync(full)) };
 }
 
+/** 보고서가 검증 종류별 필수 조건을 충족하는지 확인하고 관련 증거를 연결한다. */
 export function validateReport(root, state, config, kind, report) {
   const extraFiles = [];
   if (kind === 'review') {
@@ -279,6 +292,7 @@ export function validateReport(root, state, config, kind, report) {
   return extraFiles;
 }
 
+/** 현재 코드에 유효한 승인·검사·리뷰와 해당 기능의 QA 프로필을 확인한다. */
 export function assertReady(root, state, config) {
   assertPlan(root, state, config);
   for (const name of Object.keys(config.checks)) {
@@ -300,6 +314,7 @@ export function assertCleanSource(root) {
   ensure(!dirty && others.length === 0, 'PR/CI 기록 전에 제품 코드와 설정을 커밋해야 함');
 }
 
+/** 변경 작업을 직렬화하고 실패해도 프로젝트 lock을 해제한다. */
 export function withLock(root, callback) {
   const lock = inside(root, `${STATE_DIR}/.lock`);
   fs.mkdirSync(path.dirname(lock), { recursive: true });

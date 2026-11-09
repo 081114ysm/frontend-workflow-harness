@@ -88,6 +88,16 @@ test('ready와 승인 없이 PR 생성 명령을 실행하지 않는다', t => {
   assert.throws(() => githubWorkflow(f.root, 'pr-create', {}, () => assert.fail('원격 생성 금지')), /ready/);
 });
 
+test('필수 CI 설정이 없으면 PR 생성과 복구가 원격 호출 전에 멈춘다', t => {
+  const f = fixture(t); f.start(); f.setStage('ready');
+  const config = JSON.parse(fs.readFileSync(path.join(f.root, 'frontend-harness.config.json'), 'utf8'));
+  delete config.github.requiredChecks;
+  f.write('frontend-harness.config.json', config);
+  for (const command of ['pr-create', 'pr-recover']) {
+    assert.throws(() => githubWorkflow(f.root, command, {}, () => assert.fail('원격 호출 금지')), /github.requiredChecks/);
+  }
+});
+
 test('승인된 전체 로컬 결과로 PR을 생성하고 실제 head/base를 확인하며 재시도는 재사용한다', t => {
   const f = fixture(t); f.write('app.js', 'export const x = 42;'); f.start();
   const h = (...args) => {

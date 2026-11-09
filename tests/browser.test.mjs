@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseScenario, matchRule, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
+import { parseScenario, authorizeBrowserCredentials, matchRule, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
 import { measureBudget } from '../scripts/browser-runner.mjs';
 
 const proof = { name: 'x-api-mode', value: 'live-v1' };
@@ -45,4 +45,20 @@ test('시나리오의 외부 이동·운영 조작·근거 없는 live 규칙을
   assert.throws(() => parseScenario({ ...base, assetOrigins: ['https://example.invalid'] }, [320], 'performance'), /루프백/);
   assert.throws(() => parseScenario({ ...base, api: { expect: 'live', rules: [{ id: 'live', pathPrefix: '/api', source: 'live' }] } }, [320], 'performance'), /표식/);
   assert.throws(() => parseScenario({ ...base, performance: { pages: [{ id: 'home', path: '//example.invalid' }] } }, [320], 'performance'), /절대 경로/);
+});
+
+test('브라우저 자격 증명은 실행자가 허용한 정확한 origin과 변수만 사용할 수 있다', () => {
+  const origin = 'https://qa.example.invalid';
+  const policy = JSON.stringify({ origin, fillEnv: ['QA_PASSWORD'], storageStateEnv: 'QA_SESSION' });
+  const config = {
+    origin, origins: new Set([origin]), storageStateEnv: 'QA_SESSION',
+    cases: [{ steps: [{ action: 'fill', env: 'QA_PASSWORD' }] }],
+  };
+  assert.equal(authorizeBrowserCredentials(config, policy), true);
+  assert.throws(() => authorizeBrowserCredentials(config), /정책 필요/);
+  assert.throws(() => authorizeBrowserCredentials({ ...config, origin: 'https://elsewhere.example.invalid' }, policy), /origin/);
+  assert.throws(() => authorizeBrowserCredentials({ ...config, cases: [{ steps: [{ action: 'fill', env: 'GITHUB_TOKEN' }] }] }, policy), /입력 환경변수/);
+  assert.throws(() => authorizeBrowserCredentials({ ...config, storageStateEnv: 'OTHER_FILE' }, policy), /로그인 상태/);
+  assert.throws(() => authorizeBrowserCredentials({ ...config, origins: new Set([origin, 'https://elsewhere.example.invalid']) }, policy), /승인된 HTTPS/);
+  assert.equal(authorizeBrowserCredentials({ ...config, storageStateEnv: undefined, cases: [{ steps: [{ action: 'fill', value: 'sample' }] }] }), false);
 });

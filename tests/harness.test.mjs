@@ -28,7 +28,7 @@ function fixture(t, override = {}) {
   const config = {
     schemaVersion: 1, configured: true, project: 'Fixture', integrationBranch: 'main', defaultBranch: 'main',
     branchPrefix: 'codex/', reviewMode: 'self', requireLiveApi: false, requireCi: true,
-    github: { enabled: true, repository: 'example/app' },
+    github: { enabled: true, repository: 'example/app', requiredChecks: [{ name: 'verify', app: 'github-actions' }] },
     approval: { plan: true, pr: true },
     checks: { test: { argv: [process.execPath, '-e', 'process.exit(0)'], cwd: '.', timeoutMs: 1000 } },
     notApplicable: { lint: '테스트 fixture에 lint 대상 없음', typecheck: '테스트 fixture는 JS', build: '번들링 없는 테스트 fixture' },
@@ -322,6 +322,20 @@ test('PR 생성 승인이 없거나 코드 미커밋이면 PR 단계로 가지 �
   f.approve('pr'); f.bad(/커밋/, 'advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
 });
 
+test('GitHub 필수 체크 누락을 설정 저장·기능 착수·PR 연결 전에 거부한다', t => {
+  const f = fixture(t);
+  const missing = { ...f.config, github: { ...f.config.github, requiredChecks: [] } };
+  f.write('missing-checks.json', missing);
+  f.bad(/github.requiredChecks/, 'configure', '--from', 'missing-checks.json');
+  f.write('frontend-harness.config.json', missing);
+  f.bad(/github.requiredChecks/, 'start', '--id', '42-search');
+  f.write('frontend-harness.config.json', f.config);
+  f.ready();
+  f.write('frontend-harness.config.json', missing);
+  f.bad(/github.requiredChecks/, 'advance', '--to', 'pr', '--url', 'https://github.com/example/app/pull/9');
+  assert.equal(f.state().stage, 'ready');
+});
+
 test('PR 단계에 이르러도 수기 CI·머지 JSON만으로 완료할 수 없다', t => {
   const f = fixture(t); f.pr(); assert.equal(f.state().evidence.ci, undefined);
   f.write(f.evidence + 'ci.json', { status: 'pass', headSha: f.git('rev-parse', 'HEAD'), runUrl: 'https://github.com/example/app/actions/runs/1' });
@@ -392,7 +406,7 @@ test('자동 검증이 필수일 때 직접 작성한 live 또는 자동화 JSON
 });
 
 test('PR 단계의 로컬 진행 출력은 GitHub 동기화 블록과 같고 PR URL을 포함한다', t => {
-  const f = fixture(t, { github: { enabled: true, repository: 'example/app' } }); f.pr();
+  const f = fixture(t); f.pr();
   const output = f.ok('issue-body').trim();
   let body = '## 사용자 목적\n보존할 본문\n';
   let edits = 0;
@@ -499,6 +513,8 @@ test('설치 업데이트는 구버전의 검증 가능한 기준을 요구하�
   assert.equal(install(base).status, 0);
   const bundle = path.join(f.root, '.agents/skills/frontend-workflow-harness');
   const manifest = path.join(bundle, '.harness-install.json');
+  fs.writeFileSync(path.join(base, 'package-lock.json'), '{}');
+  fs.writeFileSync(path.join(base, 'THIRD_PARTY_NOTICES.md'), '1.0 설치기가 복사하지 않은 파일');
   const oldManifest = fs.readFileSync(manifest);
   const preview = install(source, '--update', '--dry-run');
   assert.equal(preview.status, 0, preview.stderr);
@@ -516,6 +532,8 @@ test('설치 업데이트는 구버전의 검증 가능한 기준을 요구하�
   assert.equal(update.status, 0, update.stderr);
   const report = JSON.parse(update.stdout);
   assert.equal(report.next, pkg.version);
+  assert(report.added.includes('package-lock.json'));
+  assert(!report.removed.includes('THIRD_PARTY_NOTICES.md'));
   assert.equal(fs.readFileSync(path.join(bundle, 'my-notes.md'), 'utf8'), '사용자 메모');
   assert.equal(fs.readFileSync(path.join(report.backup, 'my-notes.md'), 'utf8'), '사용자 메모');
   assert.deepEqual(f.state(), stateBefore);

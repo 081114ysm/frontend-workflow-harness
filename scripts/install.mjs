@@ -9,6 +9,7 @@ const ENTRIES = ['SKILL.md', 'README.md', 'docs', 'config', 'scripts', 'tests', 
 const OPTIONAL = ['package-lock.json', 'THIRD_PARTY_NOTICES.md'];
 const MANIFEST = '.harness-install.json';
 
+/** 번들에 포함된 일반 파일만 해시한다. 설치 경로의 링크는 거부한다. */
 function inventory(root, entries) {
   const files = Object.create(null);
   const visit = relative => {
@@ -23,23 +24,28 @@ function inventory(root, entries) {
   return files;
 }
 
-function bundleAt(root) {
+/** 1.0 설치본의 기준에는 당시 설치기가 복사한 파일만 포함한다. */
+function bundleAt(root, legacyBaseline = false) {
   const pkg = readJson(inside(root, 'package.json'));
   ensure(pkg.name === 'frontend-workflow-harness' && /^\d+\.\d+\.\d+$/.test(pkg.version || ''), '버전이 있는 하네스 번들 필요');
-  const entries = [...ENTRIES, ...OPTIONAL.filter(name => fs.existsSync(inside(root, name)))];
+  const entries = legacyBaseline && /^1\.0\./.test(pkg.version)
+    ? ENTRIES
+    : [...ENTRIES, ...OPTIONAL.filter(name => fs.existsSync(inside(root, name)))];
   return { version: pkg.version, files: inventory(root, entries) };
 }
 
+/** major, minor, patch를 숫자로 비교해 다운그레이드를 검출한다. */
 function orderVersion(a, b) {
   const left = a.split('.').map(Number);
   const right = b.split('.').map(Number);
   return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
 }
 
+/** 설치본·기준·새 번들의 해시를 대조하고 충돌을 확인한다. 디스크는 변경하지 않는다. */
 function updatePlan(target, next, baseline) {
   const current = inventory(target, fs.readdirSync(target).sort());
   const previous = Object.hasOwn(current, MANIFEST)
-    ? readJson(path.join(target, MANIFEST)) : baseline ? bundleAt(baseline) : null;
+    ? readJson(path.join(target, MANIFEST)) : baseline ? bundleAt(baseline, true) : null;
   ensure(previous && /^\d+\.\d+\.\d+$/.test(previous.version || '') && previous.files && typeof previous.files === 'object' && !Array.isArray(previous.files)
     && Object.hasOwn(previous.files, 'package.json') && Object.hasOwn(previous.files, 'SKILL.md'), '기존 설치 매니페스트가 없음. 설치 당시 원본을 --baseline으로 지정');
   ensure(readJson(path.join(target, 'package.json')).version === previous.version, '기존 설치 버전과 기준 번들이 일치하지 않음');
@@ -60,6 +66,7 @@ function updatePlan(target, next, baseline) {
     current, noop: order === 0 && Object.hasOwn(current, MANIFEST) };
 }
 
+/** 준비 디렉터리에 지정 파일을 복사한다. 같은 경로를 덮어쓰지 않는다. */
 function copyFiles(source, target, files) {
   for (const name of files) {
     const destination = path.join(target, name);
@@ -68,6 +75,7 @@ function copyFiles(source, target, files) {
   }
 }
 
+/** 검증된 새 번들을 한 번에 노출하고 교체 실패 시 이전 번들로 복구한다. */
 function applyPlan(root, source, target, next, updates) {
   const { current, ...details } = updates;
   if (updates.noop) return { installed: target, ...details };

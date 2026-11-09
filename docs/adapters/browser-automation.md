@@ -20,10 +20,23 @@ node .agents/skills/frontend-workflow-harness/scripts/harness.mjs browser-run --
 - `baseUrl`은 페이지 경로가 없는 origin이다. `target`은 기본 `local`(루프백만), 승인된 비운영 원격 환경은 `test`다. API·리소스의 다른 origin은 규칙이나 `assetOrigins`에 명시한다.
 - `engine`: `chromium`(기본), `firefox`, `webkit`. 엔진이 설치되지 않거나 사이트·인증을 사용할 수 없으면 차단으로 기록한다. 이 저장소의 실제 브라우저 통합 테스트는 Chromium으로 실행한다.
 - `cases`: `journey`·`states`·`keyboard` 사례를 프로젝트 뷰포트마다 실행한다. 사용자 동작 뒤 화면 assertion, 키 입력 뒤 초점 확인을 넣는다. 화면 상태 검사가 실제로 해당 없으면 `statesNotApplicable`에 사유를 적는다.
-- `steps.action`: `goto`(같은 origin의 `/경로`), `click`, `fill`(`value` 또는 환경변수 이름 `env`), `press`(`key`), `visible`, `text`(`value` 포함 확인), `focus`. `locator`는 `testId`, `label`, `role`/`name`, CSS `selector`를 지원한다. 값 입력용 비밀은 환경변수로만 전달한다. `storageStateEnv`는 비운영 로그인 상태 파일의 **프로젝트 상대 경로**를 담은 환경변수 이름이다. 로그인 상태 파일은 Git에서 제외한다.
+- `steps.action`은 `goto`(같은 origin의 `/경로`), `click`, `fill`, `press`(`key`), `visible`, `text`(`value` 포함 확인), `focus`를 지원한다. `locator`는 `testId`, `label`, `role`/`name`, CSS `selector`를 지원한다. 공개 테스트 값은 `fill.value`에 두고 비밀값은 아래 승인 정책에 따라 `fill.env`로 전달한다.
 - 가로 넘침, 브라우저 콘솔 오류와 네트워크 불일치도 기록한다. iframe·팝업·다운로드·복잡한 로그인처럼 이 형식이 다루지 않는 조작은 프로젝트의 전용 Playwright 테스트와 수기 증거로 확인한다. 자동 QA 필수 프로젝트는 필수 자동 시나리오도 따로 통과해야 한다.
 
 실행 후 `evidence/browser-automation.json`, `evidence/browser.json`과 `QA.md`를 갱신한다. 실패하면 이전 브라우저 통과를 재사용하지 않는다. 보고서에는 케이스 ID, 오류 수, 허용 규칙 ID, HTTP 상태와 출처 판정만 넣으며 요청 query·본문·헤더 값·원시 콘솔 메시지·쿠키는 복사하지 않는다.
+
+## 로그인 테스트 승인
+
+`fill.env` 또는 `storageStateEnv`가 있으면 실행자가 **저장소 밖의 신뢰된 환경**에서 `FRONTEND_HARNESS_BROWSER_AUTH`를 제공해야 한다. 정책에는 실제 값 대신 승인할 origin과 변수 이름만 넣는다. PR 브랜치의 파일이나 시나리오에서 정책을 가져오지 않는다. 인증 QA는 검토한 앱과 하네스에서 전용 테스트 계정으로 실행한다.
+
+```sh
+export FRONTEND_HARNESS_BROWSER_AUTH='{"origin":"https://qa.example.com","fillEnv":["QA_LOGIN_PASSWORD"],"storageStateEnv":"QA_STATE_PATH","networkOrigins":["https://qa-api.example.com"]}'
+```
+
+- `origin`은 `baseUrl`과 scheme·host·port까지 일치해야 한다. `networkOrigins`는 시나리오에 등록된 추가 API·리소스 중 실행자가 승인한 대상이다. HTTPS와 루프백 HTTP를 사용할 수 있다.
+- `fill.env`는 승인된 origin의 텍스트 입력 요소에만 사용된다. 탐색 뒤 다른 origin의 페이지에 도착하면 그 페이지에는 비밀값을 입력하지 않는다.
+- `storageStateEnv`에는 비운영 로그인 상태 파일의 **프로젝트 상대 경로**를 담은 승인된 변수 이름을 지정한다. Git에서 파일을 제외한다. 승인된 호스트의 정확한 도메인 쿠키와 승인된 origin의 웹 저장소만 로드한다. 상위 도메인과 공유하는 쿠키는 거부한다.
+- 정책은 자격 증명 사용 범위를 제한한다. 승인된 앱의 스크립트와 네트워크 경로는 테스트 전에 검토한다.
 
 ## API 판별
 

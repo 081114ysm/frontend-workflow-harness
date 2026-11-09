@@ -35,6 +35,15 @@ async function serverFixture(t) {
       return;
     }
     if (url.pathname === '/favicon.ico') { response.writeHead(204).end(); return; }
+    if (url.pathname === '/credentials') {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<label>QA credential <input type="password"></label><a href="/">Jump</a><output>Empty</output>' +
+        '<script>const params=new URLSearchParams(location.search);document.querySelector("a").href=params.get("jump")||"/";' +
+        'document.querySelector("input").oninput=()=>{document.querySelector("output").textContent="Entered";' +
+        'if(params.has("trap"))fetch("/api/write",{method:"POST",body:document.querySelector("input").value})};</script>');
+      return;
+    }
     if (url.pathname === '/write-page') {
       response.setHeader('content-type', 'text/html');
       response.end('<!doctype html><h1>Read-only check</h1><script>fetch("/api/write",{method:"POST"}).catch(()=>{})</script>');
@@ -141,4 +150,39 @@ test('운영 측정 정책은 실제 브라우저의 POST를 서버로 보내지
   assert.equal(report.automation.performance?.passed, false, JSON.stringify(report));
   assert.equal(report.automation.performance.pages[0].failed, 1);
   assert.equal(server.writes(), 0);
+});
+
+test('실제 Chromium은 승인된 입력은 허용하고 다른 origin으로 이동한 뒤에는 비밀값을 전달하지 않는다', async t => {
+  const trusted = await serverFixture(t);
+  const other = await serverFixture(t);
+  const secretName = 'HARNESS_TEST_QA_CREDENTIAL';
+  const secret = 'fixture-only-credential';
+  const policyName = 'FRONTEND_HARNESS_BROWSER_AUTH';
+  t.after(() => { delete process.env[secretName]; delete process.env[policyName]; });
+  process.env[secretName] = secret;
+  process.env[policyName] = JSON.stringify({ origin: trusted.origin, fillEnv: [secretName], networkOrigins: [other.origin] });
+  const locator = { label: 'QA credential' };
+  const fill = { action: 'fill', env: secretName, locator };
+  const entered = { action: 'text', locator: { selector: 'output' }, value: 'Entered' };
+  const input = {
+    schemaVersion: 1, baseUrl: trusted.origin, timeoutMs: 2000, assetOrigins: [other.origin],
+    statesNotApplicable: '인증 입력 fixture',
+    cases: [
+      { id: 'credential', area: 'journey', steps: [{ action: 'goto', path: '/credentials' }, fill, entered] },
+      { id: 'focus-input', area: 'keyboard', steps: [{ action: 'goto', path: '/credentials' }, { action: 'press', key: 'Tab' }, { action: 'focus', locator }] },
+    ],
+  };
+  const ok = await runBrowser({ root, input, widths: [320] });
+  assert.equal(ok.checks.journey.status, 'pass');
+  assert(!JSON.stringify(ok).includes(secret));
+  const jump = '/credentials?jump=' + encodeURIComponent(other.origin + '/credentials?trap=1');
+  input.cases[0].steps = [
+    { action: 'goto', path: jump }, { action: 'click', locator: { role: 'link', name: 'Jump' } },
+    { action: 'text', locator: { selector: 'output' }, value: 'Empty' }, fill, entered,
+  ];
+  const blocked = await runBrowser({ root, input, widths: [320] });
+  assert.equal(blocked.checks.journey.status, 'fail');
+  assert.equal(blocked.automation.scenarios[0].completed, 3);
+  assert.equal(blocked.automation.scenarios[0].failedAction, 'fill');
+  assert.equal(other.writes(), 0);
 });

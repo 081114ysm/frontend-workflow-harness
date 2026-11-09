@@ -8,7 +8,7 @@ import {
   CONFIG, STAGES, ensure, fail, sha, now, readJson, inside, writeJson,
   git, loadConfig, validateConfig, loadState, saveState, featureDirectory, progressBlock, writeQaReport,
   fingerprint, planHash, configHash, approvalValid, assertPlan, evidenceFile,
-  evidenceValid, validateReport, assertReady, assertCleanSource, withLock, activeState, terminal, restoreState, sourceFiles, BROWSER_CHECKS,
+  evidenceValid, validateReport, assertReady, assertCleanSource, withLock, activeState, terminal, restoreState, sourceFiles, BROWSER_CHECKS, requiredGithubChecks,
 } from './lib.mjs';
 
 const bundle = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,6 +24,7 @@ function parse(argv) {
   return values;
 }
 
+/** 프로젝트와 번들의 실행 환경을 읽기 전용으로 조사한다. */
 function doctor(root) {
   const packageFile = inside(root, 'package.json');
   const pkg = fs.existsSync(packageFile) ? readJson(packageFile) : {};
@@ -40,8 +41,10 @@ function doctor(root) {
   };
 }
 
+/** 확인된 기능 브랜치에서 기획·검증 틀과 활성 상태를 만든다. */
 function newFeature(root, config, options) {
   ensure(/^[a-z0-9][a-z0-9-]{0,79}$/.test(options.id || ''), '--id: 소문자/숫자/하이픈, 최대 80자');
+  requiredGithubChecks(config);
   const active = activeState(root, config);
   ensure(!active || terminal(active), '진행 중인 기능이 있음. 먼저 완료하거나 해당 기능을 재개할 것');
   const qaKind = options.qa || 'browser';
@@ -160,6 +163,7 @@ function recordEvidence(root, state, config, options, automated = false) {
   return { kind, recorded: true };
 }
 
+/** 브라우저 실행 중 코드 변경을 확인하고 성공·실패 결과를 현재 기능에 연결한다. */
 function runBrowser(root, state, config, options) {
   ensure(['qa', 'ready', 'pr'].includes(state.stage) && state.qaProfile?.kind !== 'non-ui', '화면 검증이 필요한 qa/ready/pr 단계에서 실행');
   assertPlan(root, state, config);
@@ -187,6 +191,7 @@ function runBrowser(root, state, config, options) {
   return { ...recordEvidence(root, state, config, { kind: 'browser', file }, true), apiMode: report.apiMode, evidence: artifact };
 }
 
+/** 현재 승인과 증거를 검증한 뒤 다음 단계 또는 로컬 전달로 이동한다. */
 function advance(root, state, config, options) {
   ensure(!terminal(state), '이미 종료된 기능');
   if (options.to === 'delivered') {
@@ -199,6 +204,7 @@ function advance(root, state, config, options) {
   ensure(options.to !== 'done', 'GitHub 모드에서는 github.mjs finalize 사용');
   const next = STAGES[STAGES.indexOf(state.stage) + 1];
   ensure(options.to === next, `단계를 건너뛸 수 없음. 다음 단계: ${next || '없음'}`);
+  if (next === 'pr') requiredGithubChecks(config);
   assertPlan(root, state, config);
   if (next === 'qa') ensure(evidenceValid(root, state, state.evidence.review), '현재 코드의 리뷰 결과가 필요함');
   if (['ready', 'pr', 'done'].includes(next)) assertReady(root, state, config);
@@ -251,6 +257,7 @@ function main() {
     if (command === 'configure') {
       ensure(options.from, '--from 설정 파일 필요');
       const config = validateConfig(readJson(inside(root, options.from)));
+      requiredGithubChecks(config);
       for (const check of Object.values(config.checks)) inside(root, check.cwd);
       writeJson(inside(root, CONFIG), config);
       return { configured: true };

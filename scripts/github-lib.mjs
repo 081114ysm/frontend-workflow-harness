@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import {
   ensure, inside, loadConfig, loadState, saveState, writeJson, readJson, progressBlock,
   git, assertReady, assertCleanSource, approvalValid, featureDirectory, sha, withLock,
-  activeState, terminal, evidenceValid, evidenceFile, fingerprint, planHash, configHash, now,
+  activeState, terminal, evidenceValid, evidenceFile, fingerprint, planHash, configHash, now, requiredGithubChecks,
 } from './lib.mjs';
 export { progressBlock } from './lib.mjs';
 
@@ -47,12 +47,14 @@ const latestCheck = (checks, head, name, app) => checks
   .sort((a, b) => b.id - a.id)[0];
 const succeeded = check => check?.status === 'completed' && check?.conclusion === 'success';
 const reviewed = check => succeeded(check) && check.output?.title === 'Finished';
+/** 지정한 커밋의 모든 체크 페이지를 가져온다. 재실행 결과도 현재 판정에 필요하다. */
 function checkRuns(json, repo, head) {
   const pages = json(['api', `repos/${repo}/commits/${head}/check-runs?filter=all&per_page=100`, '--paginate', '--slurp']);
   ensure(Array.isArray(pages) && pages.every(page => Array.isArray(page?.check_runs)), 'GitHub check runs 응답 형식 오류');
   return pages.flatMap(page => page.check_runs);
 }
 
+/** 실제 PR head의 체크와 통합 브랜치 이력을 확인한 뒤 완료 증거를 저장한다. */
 function finishRemote(root, state, config, repo, pr, json) {
   ensure(state.stage === 'pr', 'PR 단계에서만 원격 완료를 확인할 수 있음');
   assertReady(root, state, config); assertCleanSource(root);
@@ -60,8 +62,7 @@ function finishRemote(root, state, config, repo, pr, json) {
   ensure(pr.url === state.pullRequestUrl && pr.headRefName === state.branch && pr.headRefOid === head, 'PR 주소/브랜치/head가 현재 작업과 다름');
   const mergeCommit = pr.mergeCommit?.oid;
   ensure(pr.state === 'MERGED' && Number.isFinite(Date.parse(pr.mergedAt)) && /^[a-f0-9]{40}$/.test(mergeCommit || ''), 'GitHub에서 실제 머지가 확인되지 않음');
-  const required = config.requireCi ? config.github.requiredChecks || [] : [];
-  ensure(!config.requireCi || required.length > 0, 'github.requiredChecks에 실제 필수 검사 이름과 앱을 설정할 것');
+  const required = requiredGithubChecks(config);
   const checks = required.length || config.codeRabbit?.required ? checkRuns(json, repo, head) : [];
   const passed = required.map(({ name, app }) => {
     const check = latestCheck(checks, head, name, app);
@@ -94,6 +95,7 @@ function finishRemote(root, state, config, repo, pr, json) {
   return { stage: 'done', merge, ci, evidence: relative };
 }
 
+/** 현재 프로젝트의 GitHub 명령을 실행한다. 전송 함수 주입으로 원격 없이 실패 경로를 검증한다. */
 export function githubWorkflow(root, command, options = {}, call = args => gh(root, args)) {
   const config = loadConfig(root); const repo = target(config);
   const invoke = args => call(args);
@@ -150,6 +152,7 @@ export function githubWorkflow(root, command, options = {}, call = args => gh(ro
       saveState(root, state, 'issue-sync'); return { synced: true, issue: state.issue };
     }
     if (command === 'pr-create') {
+      requiredGithubChecks(config);
       if (state.stage === 'pr' && state.pullRequestUrl) return { url: state.pullRequestUrl, reused: true };
       ensure(state.stage === 'ready', 'ready 단계에서만 PR을 생성할 수 있음');
       assertReady(root, state, config); assertCleanSource(root);
@@ -168,6 +171,7 @@ export function githubWorkflow(root, command, options = {}, call = args => gh(ro
       saveState(root, state, 'pr-create'); return { url, reused: existing.length > 0 };
     }
     if (command === 'pr-recover') {
+      requiredGithubChecks(config);
       ensure(state.stage === 'ready', 'ready 스냅샷에서만 PR 연결 복구 가능');
       assertReady(root, state, config); assertCleanSource(root);
       ensure(!config.approval.pr || approvalValid(root, state, 'pr'), 'PR 생성 승인 기록 필요');
