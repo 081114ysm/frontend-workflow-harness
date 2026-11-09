@@ -17,10 +17,11 @@
 
 ## 명령 흐름
 
-번들 안의 CLI를 `H`라는 셸 함수로 감싼 예시다. 실제 프로젝트 루트에서 실행한다. main은 실제 통합 브랜치로 바꾼다.
+번들 안의 CLI를 `H`와 `G` 셸 함수로 감싼 예시다. 실제 프로젝트 루트에서 실행한다. main은 실제 통합 브랜치로 바꾼다.
 
 ```sh
 H() { node .agents/skills/frontend-workflow-harness/scripts/harness.mjs "$@"; }
+G() { node .agents/skills/frontend-workflow-harness/scripts/github.mjs "$@"; }
 git switch -c codex/42-order-search main
 H start --id 42-order-search --issue https://github.com/OWNER/REPO/issues/42
 ```
@@ -50,7 +51,7 @@ H advance --to qa
 
 ```sh
 H run all
-H record --kind browser --file .frontend-workflow/features/42-order-search/evidence/browser.json
+H browser-run --from qa/order-search.json
 H qa-report
 H advance --to ready
 ```
@@ -66,13 +67,14 @@ git commit -m 'feat(order): 주문 검색과 오류 복구 추가'
 H advance --to pr --url https://github.com/OWNER/REPO/pull/99
 ```
 
-현재 PR head의 CI 결과를 확인해 ci.json을 작성한다. 머지 지시와 실제 merge 결과가 있는 경우에만 merge.json을 채운다. 하네스가 PR이나 merge를 대신 실행하지 않는다.
+위 시나리오 파일은 [브라우저 자동화](../docs/adapters/browser-automation.md)에 따라 앱에서 설정한다. 수기 검증을 허용하는 앱은 `H record --kind browser --file .frontend-workflow/features/42-order-search/evidence/browser.json`을 사용할 수 있다.
+
+현재 PR head의 CI와 CodeRabbit 결과를 읽고 지적을 처리한다. 사용자 지시에 따라 GitHub에서 머지한 뒤 `finalize`로 실제 상태와 필수 체크를 확인한다.
 
 ```sh
-H record --kind ci --file .frontend-workflow/features/42-order-search/evidence/ci.json
-H record --kind merge --file .frontend-workflow/features/42-order-search/evidence/merge.json
-H advance --to done
-H issue-body
+G pr-inspect
+G finalize
+G issue-sync
 ```
 
 PR 전달까지만 요청된 작업은 pr 단계에 그대로 남긴다. 세션이 바뀌면 `H status`와 실제 Git·PR 상태를 읽고 이어간다. 승인된 검색 계약이 바뀌면 `H replan --reason '검색 URL 계약 변경'`으로 재검토한다.

@@ -15,3 +15,5 @@
 성능 예산은 기존 측정 기준을 재사용한다. 측정 환경·데이터·throttling·build mode를 고정해 이전 값과 비교한다. LCP/INP/CLS 같은 지표도 측정하지 않았으면 추정 수치를 쓰지 않는다. Lighthouse 점수 하나로 전체 성능을 판정하지 않는다.
 
 개발 서버 기동 성공과 화면 검증은 별개다. 실제 URL에서 동작·console·network·overflow를 확인하고 증거 파일을 남긴다. 결과 구조는 [브라우저 QA](../rules/verification.md)를 따른다.
+
+하네스에 자동 증거를 연결하거나 지정 페이지의 성능을 반복 측정하려면 [브라우저 자동화](browser-automation.md)를 사용한다.

@@ -5,7 +5,7 @@
 ## 최초 실행
 
 1. 프로젝트 지시·README·기존 구현을 읽고 `doctor`로 scripts/lockfile/브랜치를 확인한다.
-2. 실제 스택과 기존 문서에서 확인되지 않은 값만 구조화된 질문으로 확정한다. 브랜치 전략, 검사 명령, 디자인·API 원본, 지원 환경, GitHub 저장소와 CodeRabbit 사용 여부를 파일에 반영한다.
+2. 실제 스택과 기존 문서에서 확인되지 않은 값만 구조화된 질문으로 확정한다. 브랜치 전략, 검사 명령, 디자인·API 원본, 지원 환경, GitHub 저장소와 CodeRabbit 사용 여부를 파일에 반영한다. 자동 QA를 사용할 앱은 [브라우저 시나리오](../adapters/browser-automation.md)와 출처 확인 규칙을 준비한다.
 3. config를 검증하고 `setup-github.mjs --preview`로 준비할 템플릿·CodeRabbit 파일과 충돌을 확인한 뒤 프로젝트에 적용한다. 기존 파일은 보존하고 필요한 부분만 병합한다.
 4. GitHub 모드에서는 connector 또는 인증된 `gh`로 실제 저장소·default·권한을 확인한다. CodeRabbit App 연결은 [연동 문서](../adapters/coderabbit.md)의 별도 초기 설정이다. YAML 파일 생성만으로 연결됐다고 보고하지 않는다.
 
@@ -18,7 +18,7 @@
 | 3 | 통합 브랜치에서 기능 브랜치 생성, start, 기획서·인수 조건·상태 작성 | 검토 가능한 기획서 링크 |
 | 4 | 현재 기획서에 대한 실제 승인 확인·기록 | **기획 승인 게이트**. 승인 전 기능 구현 금지 |
 | 5 | 승인 범위 구현, 의미 있는 테스트·커밋, 구현 계약 변경 분류 | 진행 중 중요한 발견과 변경 |
-| 6 | 자체 또는 실제 독립 리뷰, 결함 수정, 자동 검사·브라우저 QA, 기록 시 QA.md 자동 갱신 | 리뷰 결과와 기능별 QA.md·증거 링크 |
+| 6 | 리뷰와 자동 검사, 구성된 브라우저 QA 또는 승인된 비화면 QA, QA.md 자동 갱신 | 리뷰 결과와 기능별 QA.md·증거 링크 |
 | 7 | qa-report로 최신성을 대조하고 diff·미검증·API 모드·롤백을 정리한 뒤 ready | **QA 확인·PR 승인 게이트**. 최신 QA.md를 보여주고 지적된 수정 반영 |
 | 8 | 지시된 범위에서 push·PR 생성, 이슈 진행 동기화 | PR URL과 현재 CI·CodeRabbit 상태 |
 | 9 | 현재 head의 CI와 실제 CodeRabbit 리뷰 확인, 지적 분류·수정 | 해결한 지적, 수용한 위험, 재검증 결과 |
@@ -38,16 +38,18 @@ G issue-create --key auth-login-20261028 --title 로그인 오류 복구 --body-
 이슈 번호 확인 → 기능 브랜치 → H start --id 42-auth-login --issue 실제URL
 기획서 작성 → 실제 승인 → H approve --gate plan ... → H advance --to implement
 구현 → H run all → H advance --to review → 실제 리뷰 기록
-H advance --to qa → 실제 브라우저 QA 기록 → H qa-report → H advance --to ready
+H advance --to qa → H browser-run --from qa/browser.json → H qa-report → H advance --to ready
 QA 결과 보고 → 실제 PR 승인 → H approve --gate pr ...
 범위에 맞춰 커밋·push → G pr-create --title ... --body-file PR본문.md
-G pr-inspect → 실제 CI·CodeRabbit 결과 확인·기록 → 필요하면 수정·재검증
-머지 지시와 실제 결과 확인 → H advance --to done → G issue-sync → G issue-close
+G pr-inspect → CI·CodeRabbit 지적 검토 → 필요하면 수정·재검증
+지시에 따라 실제 머지 → G finalize → G issue-sync → G issue-close
 ```
 
 `G pr-create`는 준비 조건을 확인하고 실제 PR의 base/head를 검증한 뒤 상태를 pr로 바꾼다. Git push·머지는 자동 실행하지 않는다. 해당 작업을 승인받은 에이전트가 수행한다. 댓글 재리뷰 명령은 사용자가 봇 리뷰 요청까지 지시한 범위에서만 보낸다.
 
 에이전트는 QA 결과 보고에 `.frontend-workflow/features/{id}/QA.md` 링크를 포함한다. 자동 검사 실행 결과와 실제 브라우저 조작 후 기록한 내용을 구분한다. 실패·차단된 보고서도 문서에 남기되 통과로 처리하지 않는다. 사용자가 JSON이나 Markdown을 매번 직접 작성하도록 요구하지 않는다.
+
+GitHub를 사용하지 않는 프로젝트는 ready 뒤 `H advance --to delivered`로 로컬 전달을 기록한다. 화면에 영향이 없는 기능은 프로젝트 설정이 허용할 때 `H start --id 기능ID --qa non-ui --reason 사유`로 시작하고, 실제 테스트와 리뷰를 수행한다.
 
 ## 사용자에게 보이는 예
 

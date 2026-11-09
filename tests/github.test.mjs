@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { githubWorkflow, mergeProgress, progressBlock } from '../scripts/github-lib.mjs';
 import { codeRabbitConfig } from '../scripts/coderabbit-config.mjs';
-import { BROWSER_CHECKS } from '../scripts/lib.mjs';
+import { ACTIVE_STATE, BROWSER_CHECKS } from '../scripts/lib.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 function fixture(t) {
@@ -25,7 +25,7 @@ function fixture(t) {
   write('frontend-harness.config.json', {
     schemaVersion: 1, configured: true, project: 'Fixture', integrationBranch: 'main', defaultBranch: 'main', branchPrefix: 'codex/',
     reviewMode: 'self', requireLiveApi: false, requireCi: true, approval: { plan: true, pr: true },
-    github: { enabled: true, repository: 'example/app' }, codeRabbit: { required: true },
+    github: { enabled: true, repository: 'example/app', requiredChecks: [{ name: 'verify', app: 'github-actions' }] }, codeRabbit: { required: true },
     checks: { test: { argv: [process.execPath, '-e', 'process.exit(0)'], cwd: '.', timeoutMs: 1000 } },
     notApplicable: { lint: 'fixture', typecheck: 'fixture', build: 'fixture' }, context: { viewports: [320] },
   });
@@ -34,9 +34,9 @@ function fixture(t) {
     const r = spawnSync(process.execPath, [path.join(source, 'scripts/harness.mjs'), '--root', root, 'start', '--id', '42-search', '--issue', 'https://github.com/example/app/issues/42'], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
   };
-  const stateFile = path.join(root, '.frontend-workflow/state.json');
+  const stateFile = path.join(root, ACTIVE_STATE);
   const readState = () => JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-  const setStage = stage => { const state = readState(); state.stage = stage; state.pullRequestUrl = 'https://github.com/example/app/pull/9'; write('.frontend-workflow/state.json', state); };
+  const setStage = stage => { const state = readState(); state.stage = stage; state.pullRequestUrl = 'https://github.com/example/app/pull/9'; write(ACTIVE_STATE, state); };
   return { root, git, write, start, readState, setStage };
 }
 
@@ -117,12 +117,54 @@ test('승인된 전체 로컬 결과로 PR을 생성하고 실제 head/base를 �
   assert.equal(githubWorkflow(f.root, 'pr-create', options, fake).reused, false);
   assert.equal(f.readState().stage, 'pr');
   assert.equal(githubWorkflow(f.root, 'pr-create', options, fake).reused, true); assert.equal(created, 1);
+
+  const head = f.git('rev-parse', 'HEAD');
+  const url = 'https://github.com/example/app/pull/9';
+  const merged = { url, state: 'MERGED', baseRefName: 'main', headRefName: 'codex/42-search', headRefOid: head, mergedAt: '2026-11-02T00:00:00Z', mergeCommit: { oid: 'a'.repeat(40) } };
+  const makeCheck = (name, slug, id, checkHead = head, conclusion = 'success', title) => ({ name, app: { slug }, id, head_sha: checkHead, status: 'completed', conclusion, output: { title } });
+  const goodCi = makeCheck('verify', 'github-actions', 1);
+  let checks = [goodCi, makeCheck('CodeRabbit', 'coderabbitai', 2, head, 'success', 'Review skipped')];
+  let pr = { ...merged, state: 'OPEN' };
+  let status = 'diverged';
+  const remote = args => {
+    if (args[0] === 'pr') return JSON.stringify(pr);
+    if (args[1].includes('/check-runs?')) {
+      assert.deepEqual(args.slice(2), ['--paginate', '--slurp']);
+      return JSON.stringify([{ check_runs: checks.slice(0, 1) }, { check_runs: checks.slice(1) }]);
+    }
+    if (args[1].includes('/git/ref/')) return JSON.stringify({ object: { sha: 'b'.repeat(40) } });
+    if (args[1].includes('/compare/')) return JSON.stringify({ status, merge_base_commit: { sha: merged.mergeCommit.oid } });
+    assert.fail(args.join(' '));
+  };
+  const finish = () => githubWorkflow(f.root, 'finalize', {}, remote);
+  assert.throws(finish, /실제 머지/);
+  pr = merged;
+  f.setStage('ready');
+  assert.equal(githubWorkflow(f.root, 'pr-recover', { url }, remote).stage, 'pr');
+  const manual = spawnSync(process.execPath, [path.join(source, 'scripts/harness.mjs'), '--root', f.root, 'record', '--kind', 'merge', '--file', prefix + 'merge.json'], { encoding: 'utf8' });
+  assert.match(manual.stderr, /finalize/);
+  assert.throws(finish, /CodeRabbit 리뷰 미완료/);
+  checks[1].output.title = 'Finished';
+  assert.throws(finish, /지적 처리 기록/);
+  f.write(prefix + 'coderabbit.json', { status: 'completed', provider: 'coderabbitai', headSha: head, reviewUrl: url + '#review', findings: [] });
+  h('record', '--kind', 'coderabbit', '--file', prefix + 'coderabbit.json');
+  checks.push(makeCheck('verify', 'github-actions', 3, head, 'failure'));
+  assert.throws(finish, /필수 검사 미통과/);
+  checks = [makeCheck('verify', 'github-actions', 4, 'c'.repeat(40)), checks[1]];
+  assert.throws(finish, /필수 검사 미통과/);
+  checks.push(goodCi);
+  assert.throws(finish, /통합 브랜치 이력/);
+  assert.equal(f.readState().stage, 'pr');
+  status = 'ahead';
+  assert.equal(finish().stage, 'done');
+  assert.equal(f.readState().evidence.merge.remote, true);
+  assert.equal(f.readState().evidence.ci.summary.headSha, head);
 });
 
 test('CodeRabbit skipped success를 실제 완료로 표시하지 않는다', t => {
   const f = fixture(t); f.start(); f.setStage('pr');
   let title = 'Review skipped';
-  const fake = args => args[0] === 'api' ? JSON.stringify([{ id: 1, name: 'CodeRabbit', app: { slug: 'coderabbitai' }, status: 'completed', conclusion: 'success', output: { title } }])
+  const fake = args => args[0] === 'api' ? JSON.stringify([{ check_runs: [{ id: 1, head_sha: f.git('rev-parse', 'HEAD'), name: 'CodeRabbit', app: { slug: 'coderabbitai' }, status: 'completed', conclusion: 'success', output: { title } }] }])
     : JSON.stringify({ headRefOid: f.git('rev-parse', 'HEAD'), baseRefName: 'main', state: 'OPEN' });
   assert.equal(githubWorkflow(f.root, 'pr-inspect', {}, fake).actualCodeRabbitReviewCompleted, false);
   title = 'Finished'; assert.equal(githubWorkflow(f.root, 'pr-inspect', {}, fake).actualCodeRabbitReviewCompleted, true);

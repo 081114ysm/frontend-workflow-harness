@@ -8,7 +8,8 @@
   "reviewMode": "self",
   "requireLiveApi": false,
   "requireCi": true,
-  "github": { "enabled": true, "repository": "소유자/저장소명" },
+  "github": { "enabled": true, "repository": "소유자/저장소명", "requiredChecks": [{ "name": "실제 CI 체크 이름", "app": "github-actions" }] },
+  "qa": { "allowNonUi": false, "automationRequired": false },
   "codeRabbit": { "required": true },
   "approval": { "plan": true, "pr": true },
   "checks": {

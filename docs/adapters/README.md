@@ -8,6 +8,7 @@ core는 범위·승인·증거·완료 기준을 다룬다. 아래는 실제 프
 | [디자인 원본](design-source.md) | Figma·화면 기획·기존 디자인 시스템을 사용 |
 | [API와 Mock](api-mocking.md) | 서버 연동과 fixture를 검증 |
 | [브라우저와 테스트](browser-testing.md) | 지원 환경·자동화·성능 예산 확정 |
+| [브라우저 자동화](browser-automation.md) | 실제 시나리오·API 출처·성능을 실행해 증거를 저장 |
 | [CodeRabbit](coderabbit.md) | GitHub App 연결·자동 리뷰·현재 head 결과 확인 |
 | [선택 서비스](optional-services.md) | 외부 문서·시각 회귀·리뷰 봇·배포 미리보기 |
 

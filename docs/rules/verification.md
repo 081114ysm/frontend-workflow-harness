@@ -23,6 +23,8 @@ journey/responsive/keyboard는 해당 없음으로 처리하지 않는다. 나�
 
 브라우저·버전, 검증 URL, viewport, API 모드, 실제 결과를 `evidence/browser.json`에 쓴다. 스크린샷·trace·검사 결과를 같은 evidence 디렉터리에 저장하고 artifacts에 상대 경로를 넣는다. 파일 내용도 해시로 확인하므로 나중에 증거가 바뀌면 재기록해야 한다.
 
+자동화가 설정된 프로젝트에서는 [browser-run](../adapters/browser-automation.md)으로 화면·키보드·API를 검사한다. 실행한 동작과 관측한 API 출처·성능 예산을 자동으로 기록한다. 화면에 영향이 없는 작업은 `qa.allowNonUi`가 켜져 있고 기획에 사유를 남겼을 때 실제 `test` 검사와 리뷰를 요구한다.
+
 ## 기능별 QA.md 자동 저장
 
 `start`가 `.frontend-workflow/features/{id}/QA.md`를 만든다. `run`, `record`, `advance`, `replan` 등 상태를 저장하는 명령은 같은 문서를 자동 갱신한다. 미실행 검사와 시작 시 복사한 JSON 예시는 통과 결과로 사용하지 않는다.
@@ -45,7 +47,7 @@ Playwright가 이미 있다면 role/label 기반 선택자와 사용자 결과 a
 
 Mock은 계약에 기반한 정상·지연·빈 결과·400/401/403/409/429/500·timeout 케이스를 재현하는 데 쓴다. 실제 API를 붙였을 때 확인해야 할 CORS·쿠키·인증 만료·응답 schema·페이지네이션을 대체하지 못한다.
 
-`apiMode: mock` 결과는 화면 검증으로만 보고한다. 프로젝트의 `requireLiveApi: true`이면 live 증거 전에는 ready가 될 수 없다. 실제 서버가 없으면 이유와 필요한 환경을 남기고 해당 단계에서 전달한다. 백엔드 API를 임의로 추가·변경하지 않는다.
+`apiMode: mock` 결과는 화면 검증으로 보고한다. `requireLiveApi: true`이면 `browser-run`에서 출처가 입증된 `live` 결과가 있어야 ready가 된다. 실제 API와 Mock이 함께 관측되면 `mixed`, 근거가 부족하면 `unknown`으로 남긴다. 수기 보고서는 실제 연동 필수 조건을 통과시킬 수 없다.
 
 ## 남길 증거와 한계
 

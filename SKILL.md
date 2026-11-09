@@ -12,8 +12,8 @@ license: MIT
 2. 최초 설정 또는 스택 변경: [프로젝트 설정](docs/rules/project-setup.md). `scripts/harness.mjs doctor`로 실제 명령과 브랜치를 확인하고 설정한다. 명시된 사용자 선택을 우선하고, 빠진 필수 결정만 질문한다.
 3. 기능 착수·재개: [워크플로우](docs/rules/workflow.md), [진행 복구](docs/rules/progress.md). 하나의 활성 기능과 기획서·승인 범위를 확인한다. 이미 주어진 승인을 반복해서 요구하지 않는다.
 4. 계획·구현: [프론트엔드 계약](docs/rules/frontend-contract.md). 실제 원본, 화면 상태, 인수 조건, API 계약을 기획서에 연결하고 기존 구조를 재사용한다.
-5. 검증: [리뷰](docs/rules/review.md), [브라우저 QA](docs/rules/verification.md). 실행하지 못한 항목은 미검증으로 남기고 Mock과 실제 연동, 자체와 독립 리뷰를 구분한다.
-6. 전달: [GitHub 운영](docs/rules/github.md), [CodeRabbit](docs/adapters/coderabbit.md). 코드·기획 변경 뒤에는 이전 증거를 재사용하지 않는다. PR 생성 뒤 현재 head의 CI·실제 봇 리뷰와 머지를 확인한 뒤 완료한다.
+5. 검증: [리뷰](docs/rules/review.md), [QA](docs/rules/verification.md). 구성된 앱은 [browser-run](docs/adapters/browser-automation.md)으로 화면과 API를 검사한다. 승인된 비화면 작업은 실제 테스트로 검증한다. 미검증 항목과 API 출처는 QA.md에 남긴다.
+6. 전달: [GitHub 운영](docs/rules/github.md), [CodeRabbit](docs/adapters/coderabbit.md). 코드·기획 변경 뒤에는 이전 증거를 재사용하지 않는다. GitHub 머지 후 `finalize`로 체크와 머지를 확인하고, 로컬 전용 작업은 `delivered`로 끝낸다.
 
 번들의 CLI 경로는 `scripts/harness.mjs`다. 설치 후에는 보통 `.agents/skills/frontend-workflow-harness/scripts/harness.mjs`다. `--root`로 대상 프로젝트를 명시할 수 있다. 다른 프로젝트 경로와 섞지 않는다.
 

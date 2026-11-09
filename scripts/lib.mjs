@@ -5,8 +5,11 @@ import { spawnSync } from 'node:child_process';
 import { renderQaReport, mergeQaReport } from './qa-report.mjs';
 
 export const STATE_DIR = '.frontend-workflow';
+export const ACTIVE_STATE = `${STATE_DIR}/runtime/active.json`;
+const LEGACY_STATE = `${STATE_DIR}/state.json`;
 export const CONFIG = 'frontend-harness.config.json';
 export const STAGES = ['plan', 'implement', 'review', 'qa', 'ready', 'pr', 'done'];
+export const terminal = state => ['done', 'delivered'].includes(state?.stage);
 export const BROWSER_CHECKS = ['journey', 'states', 'responsive', 'keyboard', 'console', 'network'];
 export const fail = (message) => { throw new Error(message); };
 export const ensure = (condition, message) => { if (!condition) fail(message); };
@@ -24,7 +27,7 @@ export const nonempty = (value) => typeof value === 'string' && value.trim().len
 export function progressBlock(state) {
   return ['<!-- frontend-workflow:begin -->', `기능: ${state.id}`, `기획서: ${state.plan}`,
     `QA: ${featureDirectory(state)}/QA.md`,
-    ...STAGES.map((stage, index) => `- [${index < STAGES.indexOf(state.stage) || state.stage === 'done' ? 'x' : ' '}] ${stage}`),
+    ...STAGES.map((stage, index) => `- [${index < STAGES.indexOf(state.stage) || state.stage === 'done' || (state.stage === 'delivered' && index <= STAGES.indexOf('ready')) ? 'x' : ' '}] ${stage}`),
     `현재 단계: ${state.stage}`, ...(state.pullRequestUrl ? [`PR: ${state.pullRequestUrl}`] : []),
     '<!-- frontend-workflow:end -->'].join('\n');
 }
@@ -66,6 +69,14 @@ export function validateConfig(config) {
   if (config.github) {
     ensure(typeof config.github.enabled === 'boolean', 'github.enabled: boolean 필요');
     ensure(!config.github.enabled || /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(config.github.repository || ''), 'github.repository: 실제 owner/repo 필요');
+    if (config.github.requiredChecks !== undefined) {
+      ensure(Array.isArray(config.github.requiredChecks) && config.github.requiredChecks.every(check => nonempty(check?.name) && /^[a-z0-9-]+$/.test(check?.app || '')), 'github.requiredChecks: name과 GitHub App slug 필요');
+      ensure(new Set(config.github.requiredChecks.map(check => `${check.app}:${check.name}`)).size === config.github.requiredChecks.length, '중복된 필수 GitHub 체크');
+    }
+  }
+  if (config.qa !== undefined) {
+    ensure(config.qa && typeof config.qa === 'object' && !Array.isArray(config.qa), 'qa 객체 필요');
+    for (const key of ['allowNonUi', 'automationRequired']) ensure(config.qa[key] === undefined || typeof config.qa[key] === 'boolean', `qa.${key}: boolean 필요`);
   }
   if (config.codeRabbit) ensure(typeof config.codeRabbit.required === 'boolean', 'codeRabbit.required: boolean 필요');
   for (const gate of ['plan', 'pr']) ensure(typeof config.approval?.[gate] === 'boolean', `approval.${gate}: boolean 필요`);
@@ -117,11 +128,40 @@ export function featureDirectory(state) { return `${STATE_DIR}/features/${state.
 export function planHash(root, state) { return sha(fs.readFileSync(inside(root, state.plan))); }
 export function configHash(root) { return sha(fs.readFileSync(inside(root, CONFIG))); }
 
-export function loadState(root) {
-  const state = readJson(inside(root, `${STATE_DIR}/state.json`));
-  ensure(state.schemaVersion === 1 && /^[a-z0-9][a-z0-9-]{0,79}$/.test(state.id) && STAGES.includes(state.stage), '상태 파일 형식이 올바르지 않음');
+function validatedState(state) {
+  ensure(state?.schemaVersion === 1 && /^[a-z0-9][a-z0-9-]{0,79}$/.test(state.id) && (STAGES.includes(state.stage) || terminal(state)), '상태 파일 형식이 올바르지 않음');
   ensure(state.plan === `${featureDirectory(state)}/plan.md`, '기획서 경로가 상태와 일치하지 않음');
   return state;
+}
+
+export function activeState(root, config = loadConfig(root)) {
+  const active = inside(root, ACTIVE_STATE);
+  if (fs.existsSync(active)) return validatedState(readJson(active));
+  const legacy = inside(root, LEGACY_STATE);
+  if (!fs.existsSync(legacy)) return null;
+  const raw = fs.readFileSync(legacy, 'utf8');
+  const state = validatedState(JSON.parse(raw));
+  // A v1 snapshot shipped on the integration branch is history in a different checkout.
+  const integrated = git(root, ['show', `${config.integrationBranch}:${LEGACY_STATE}`], true);
+  return state.branch !== git(root, ['branch', '--show-current']) && raw.trim() === integrated ? null : state;
+}
+
+export function loadState(root) {
+  const state = activeState(root);
+  ensure(state, '활성 기능이 없음. start 또는 restore --id 실행');
+  return state;
+}
+
+export function restoreState(root, config, id) {
+  ensure(/^[a-z0-9][a-z0-9-]{0,79}$/.test(id || ''), '--id: 소문자/숫자/하이픈 필요');
+  const current = activeState(root, config);
+  ensure(!current || terminal(current), '활성 기능이 있음. 현재 상태를 덮어쓸 수 없음');
+  const archive = inside(root, `${featureDirectory({ id })}/state.json`);
+  ensure(fs.existsSync(archive), '이 브랜치에 기능 기록이 없음');
+  const state = validatedState(readJson(archive));
+  ensure(state.id === id && state.branch === git(root, ['branch', '--show-current']), '기능 ID 또는 작업 브랜치가 기록과 다름');
+  saveState(root, state, 'restore');
+  return { id, stage: state.stage, plan: state.plan };
 }
 
 /**
@@ -137,7 +177,7 @@ export function saveState(root, state, action, detail = {}) {
   state.history.push({ at: state.updatedAt, action, stage: state.stage, ...detail });
   // Archive and active pointer contain the same data; recover from the archive after a crash.
   writeJson(inside(root, `${featureDirectory(state)}/state.json`), state);
-  writeJson(inside(root, `${STATE_DIR}/state.json`), state);
+  writeJson(inside(root, ACTIVE_STATE), state);
   try { writeQaReport(root, state); } catch (error) {
     fail(`상태는 저장됐지만 QA.md 갱신 실패: ${error.message}. 원인을 해결한 뒤 qa-report로 다시 생성할 것`);
   }
@@ -214,8 +254,9 @@ export function validateReport(root, state, config, kind, report) {
     ensure(nonempty(report.scope), '실제 리뷰 범위 필요');
   } else if (kind === 'browser') {
     ensure(nonempty(report.url) && /^https?:\/\//.test(report.url) && nonempty(report.browser), '검증 URL과 브라우저/버전 필요');
-    ensure(['mock', 'live', 'none'].includes(report.apiMode), 'apiMode: mock/live/none');
+    ensure(['mock', 'live', 'none', 'mixed', 'unknown'].includes(report.apiMode), 'apiMode: mock/live/none/mixed/unknown');
     ensure(!config.requireLiveApi || report.apiMode === 'live', '실제 API 연동 검증이 필수임');
+    ensure(report.automation?.performance?.passed !== false, '설정한 성능 예산을 충족하지 못함');
     ensure(config.context.viewports.every(width => report.viewports?.includes(width)), '설정한 모든 뷰포트의 검증 필요');
     for (const name of BROWSER_CHECKS) {
       const check = report.checks?.[name];
@@ -234,12 +275,6 @@ export function validateReport(root, state, config, kind, report) {
       ensure(finding.status !== 'accepted' || nonempty(finding.reason), 'CodeRabbit 지적 수용 사유 필요');
       ensure(!['critical', 'high'].includes(finding.severity) || finding.status === 'fixed', 'CodeRabbit Critical/High를 먼저 수정해야 함');
     }
-  } else if (kind === 'ci') {
-    ensure(report.status === 'pass' && /^https:\/\//.test(report.runUrl || ''), '성공한 CI run URL 필요');
-    ensure(report.headSha === git(root, ['rev-parse', 'HEAD']), 'CI가 현재 HEAD에서 실행되지 않았음');
-  } else if (kind === 'merge') {
-    ensure(report.merged === true && report.pullRequestUrl === state.pullRequestUrl && report.targetBranch === config.integrationBranch
-      && /^[a-f0-9]{40}$/.test(report.mergeCommit || '') && nonempty(report.mergedAt), '실제 머지 결과/대상 브랜치/커밋/시각 필요');
   } else fail(`지원하지 않는 증거 종류: ${kind}`);
   return extraFiles;
 }
@@ -250,7 +285,13 @@ export function assertReady(root, state, config) {
     const record = state.checks[name];
     ensure(record?.passed && evidenceValid(root, state, record), `현재 코드의 ${name} 검사 통과 기록이 없음`);
   }
-  for (const kind of ['review', 'browser']) ensure(evidenceValid(root, state, state.evidence[kind]), `현재 코드의 ${kind} 증거가 없거나 변경됨`);
+  ensure(evidenceValid(root, state, state.evidence.review), '현재 코드의 review 증거가 없거나 변경됨');
+  if (state.qaProfile?.kind === 'non-ui') {
+    ensure(config.qa?.allowNonUi && !config.requireLiveApi && nonempty(state.qaProfile.reason) && config.checks.test, 'non-ui: 프로젝트 허용, 미적용 사유, test 검사 필요');
+  } else {
+    ensure(evidenceValid(root, state, state.evidence.browser), '현재 코드의 browser 증거가 없거나 변경됨');
+    if (config.requireLiveApi || config.qa?.automationRequired) ensure(state.evidence.browser.automated === true, 'browser-run의 실제 관측 결과 필요');
+  }
 }
 
 export function assertCleanSource(root) {
@@ -269,7 +310,7 @@ export function withLock(root, callback) {
   fs.writeFileSync(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, at: now() }));
   try {
     const ignore = inside(root, `${STATE_DIR}/.gitignore`);
-    const managed = '# frontend-workflow: private runtime files\n.lock/\n**/*.log\ninstall-*/\n';
+    const managed = '# frontend-workflow: private runtime files\n.lock/\n**/*.log\ninstall-*/\n/runtime/\n/state.json\n';
     const existing = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8') : '';
     if (!existing.endsWith(managed)) fs.writeFileSync(ignore, existing + (existing && !existing.endsWith('\n') ? '\n' : '') + managed);
     return callback();
