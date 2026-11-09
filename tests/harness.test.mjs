@@ -599,15 +599,31 @@ test('설치 업데이트는 구버전의 검증 가능한 기준을 요구하�
   f.write(injected, `import fs from 'node:fs';
 import path from 'node:path';
 const rename = fs.renameSync;
+const failure = process.env.HARNESS_TEST_INSTALL_FAILURE;
 fs.renameSync = (from, to) => {
-  if (path.basename(from).startsWith('install-stage-') && path.basename(to) === 'frontend-workflow-harness') process.exit(97);
+  if (failure === 'backup' && path.basename(to) === 'bundle') throw new Error('fixture backup move failed');
+  if (path.basename(from).startsWith('install-stage-') && path.basename(to) === 'frontend-workflow-harness') {
+    if (failure === 'activate') throw new Error('fixture activation failed');
+    process.exit(97);
+  }
   return rename(from, to);
 };`);
-  const abort = spawnSync(process.execPath, ['--import', pathToFileURL(path.join(f.root, injected)).href,
-    path.join(source, 'scripts/install.mjs'), '--target', f.root, '--update', '--baseline', base], { encoding: 'utf8' });
+  const failSwap = failure => spawnSync(process.execPath, ['--import', pathToFileURL(path.join(f.root, injected)).href,
+    path.join(source, 'scripts/install.mjs'), '--target', f.root, '--update', '--baseline', base], {
+    encoding: 'utf8', env: { ...process.env, HARNESS_TEST_INSTALL_FAILURE: failure },
+  });
+  const journal = path.join(f.root, '.frontend-workflow/runtime/install-swap-codex.json');
+  for (const failure of ['backup', 'activate']) {
+    const result = failSwap(failure);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /fixture .* failed/);
+    assert(!fs.existsSync(journal));
+    assert.equal(fs.readFileSync(path.join(bundle, 'my-notes.md'), 'utf8'), '사용자 메모');
+    assert.equal(install(source, '--update', '--baseline', base, '--dry-run').status, 0);
+  }
+  const abort = failSwap('interrupt');
   assert.equal(abort.status, 97, abort.stderr);
   assert(!fs.existsSync(bundle));
-  const journal = path.join(f.root, '.frontend-workflow/runtime/install-swap-codex.json');
   assert(fs.existsSync(journal));
   assert.match(install(source, '--update', '--baseline', base, '--dry-run').stderr, /미완료 교체/);
   assert(fs.existsSync(journal));

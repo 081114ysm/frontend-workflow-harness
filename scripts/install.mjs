@@ -119,13 +119,18 @@ function applyPlan(root, source, target, next, updates, journal) {
       ensure(JSON.stringify(latest) === JSON.stringify(current), '업데이트 중 설치본이 변경됨');
       backup = path.join(fs.mkdtempSync(path.join(runtime, 'install-backup-')), 'bundle');
       writeJson(journal, { backupName: path.basename(path.dirname(backup)), stagingName: path.basename(staging) });
-      fs.renameSync(target, backup);
+      try { fs.renameSync(target, backup); }
+      catch (error) {
+        if (fs.existsSync(target)) fs.unlinkSync(journal);
+        throw error;
+      }
     } else ensure(!fs.lstatSync(target, { throwIfNoEntry: false }), '설치 중 대상 경로가 생김');
     try { fs.renameSync(staging, target); }
     catch (error) {
       if (backup && !fs.existsSync(target)) {
         try { fs.renameSync(backup, target); }
         catch { throw new Error('교체 실패. 기존 설치본 백업: ' + backup); }
+        fs.unlinkSync(journal);
       }
       throw error;
     }
