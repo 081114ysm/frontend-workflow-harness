@@ -8,11 +8,11 @@ npm run verify
 
 Node 내장 test runner만 사용한다. 임시 디렉터리에서 테스트용 Git 저장소와 합성 보고서를 생성하며 원격 이슈·PR·API·배포는 호출하지 않는다. 실제 사용자 승인이나 브라우저 결과로 오해하지 않도록 fixture에 합성 자료임을 표시한다.
 
-실제 Chromium과 로컬 HTTP 앱을 쓰는 브라우저 통합 검증은 별도로 실행한다. 이 하네스의 CI에도 별도 작업으로 정의돼 있다.
+실제 브라우저와 로컬 HTTP 앱을 쓰는 통합 검증은 별도로 실행한다. 기본 엔진은 Chromium이다. `HARNESS_TEST_BROWSER`를 `firefox` 또는 `webkit`으로 설정하면 해당 엔진을 실행한다. CI는 Ubuntu와 Windows에서 세 엔진을 각각 실행한다.
 
 ```sh
 npm ci
-npx playwright install chromium
+npx playwright install chromium firefox webkit
 npm run test:browser
 ```
 
@@ -58,8 +58,20 @@ CodeRabbit 검토 후 로컬 기본 검증 69개와 실제 Chromium 검증 4개�
 
 재검토 이후 기본 검증 70개와 실제 Chromium 검증 4개를 다시 통과했다. 설치 경로를 백업으로 옮긴 뒤 테스트 프로세스를 강제 종료해 복구 기록이 남는 것을 확인했다. 종료된 실행의 잠금을 제거하고 업데이트를 재시도하니 기존 번들과 사용자 파일을 복구한 뒤 교체가 완료됐다. 잘못된 브라우저 시나리오는 원문과 테스트 비밀값을 제외하고 실패 원인을 QA 문서에 남겼다.
 
+## 1.2 브라우저 검증
+
+macOS에서 기본 검증 77개를 통과했다. 브라우저 통합 검증은 Chromium 6개, Firefox 5개, WebKit 5개가 통과했다. 공통 검사는 화면 조작·뷰포트, API 출처, 운영 모드의 쓰기 차단·다른 URL 거부, 인증 입력 대상 제한을 확인한다. MSW 검사는 Chromium에서 실제 서비스 워커를 실행하고 Mock 응답 표식 누락을 거부하는지 확인했다. Firefox·WebKit에서는 이 Chromium 전용 검사만 제외한다.
+
+PR #4의 `40989d4`에서 Windows Node 24 기본 검증과 Windows·Ubuntu의 브라우저 6개 작업이 모두 통과했다. Windows 검사에는 프로젝트에서 설정한 npm 명령의 실제 실행도 포함된다. [플랫폼별 CI 결과](https://github.com/081114ysm/frontend-workflow-harness/actions/runs/42571893637)
+
+별도 실서버 헤더가 없는 로컬 테스트 API도 세 엔진에서 확인했다. 실행자 승인이 없으면 서버에 요청이 가지 않았고, 승인된 실행에서는 서버에 한 번 도달했다. 승인된 API가 리다이렉트했을 때는 결과가 `unknown`이었으며 리다이렉트 목적지에 요청이 가지 않았다.
+
+2026-11-09 15:13 KST에 [경소GO 공개 홈](https://sports.gbsw.hs.kr/)을 Chromium 158.0.8127.18에서 1280px, 캐시 없이 세 번 탐색했다. 페이지가 사용하는 공개 API의 읽기 요청을 허용했고 세 표본 모두 유효했다. 중앙값은 TTFB 272.4ms, FCP 600ms, LCP 608ms, load 977.4ms, CLS 0.000105였다. 이 실행에는 예산을 지정하지 않았다.
+
+같은 날 Anjava `/dashboard`는 로그인 없는 탐색에서 `/login`으로 이동해 세 표본을 모두 `unexpected-url`로 거부했다. 대시보드 성능값은 기록하지 않았다.
+
 ## 검증하지 않은 것
 
-개별 소비 앱의 화면·API·Figma 일치와 운영 URL의 성능, 전체 WCAG 준수, Firefox·WebKit 실동작, Windows 실행은 별도로 확인해야 한다. 기록한 성능 표본은 로컬 테스트 앱에서 관측했다.
+개별 소비 앱의 화면·API·Figma 일치와 전체 WCAG 준수는 해당 앱의 인수 조건과 환경에 따라 확인한다. 운영 성능 측정은 지정한 URL과 실행 환경에 대한 실험실 표본이다.
 
 테스트 성공은 CLI의 확인 로직이 동작한다는 근거다. 스킬을 읽는 에이전트가 모든 판단을 정확히 한다거나 모든 서비스에서 결함이 없다는 증거는 아니다.

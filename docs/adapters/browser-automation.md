@@ -4,21 +4,20 @@
 
 ## 실행
 
-대상 앱에 이미 있는 `playwright` 또는 `@playwright/test`를 사용한다. 없으면 프로젝트의 패키지 관리자에 맞춰 개발 의존성과 선택 엔진을 설치한다. 예를 들어 npm 프로젝트에서는:
+앱 루트에서 실제 URL로 초안을 만든다. 기존 시나리오를 보존하고, 앱의 패키지 관리자에 맞는 Playwright 설치 명령과 첫 탐색 명령을 출력한다.
 
 ```sh
-npm install --save-dev playwright
-npx playwright install chromium
+node .agents/skills/frontend-workflow-harness/scripts/harness.mjs browser-init --url http://localhost:3000/orders
 ```
 
-실행 중인 앱에 맞게 `qa/browser.json`을 작성한다. URL이나 비밀번호를 임의로 만들지 않는다. 시나리오는 Git에서 무시되지 않는 일반 파일이어야 코드 지문에 연결된다. 대상 앱 루트에서 하네스 CLI를 실행한다.
+기본 경로는 `qa/browser.json`이고 `--file`로 바꿀 수 있다. 기존 `playwright` 또는 `@playwright/test`가 있으면 재사용한다. 앱의 기존 개발 서버를 기동하고 출력된 탐색 명령으로 실제 URL이 열리는지 먼저 확인한다. 초안의 `cases`를 실제 화면의 행동·기대 결과로 채워야 기능 QA를 실행할 수 있다. 시나리오는 Git에서 무시되지 않는 일반 파일이어야 코드 지문에 연결된다.
 
 ```sh
 node .agents/skills/frontend-workflow-harness/scripts/harness.mjs browser-run --from qa/browser.json
 ```
 
 - `baseUrl`은 페이지 경로가 없는 origin이다. `target`은 기본 `local`(루프백만), 승인된 비운영 원격 환경은 `test`다. API·리소스의 다른 origin은 규칙이나 `assetOrigins`에 명시한다.
-- `engine`: `chromium`(기본), `firefox`, `webkit`. 엔진이 설치되지 않거나 사이트·인증을 사용할 수 없으면 차단으로 기록한다. 이 저장소의 실제 브라우저 통합 테스트는 Chromium으로 실행한다.
+- `engine`은 `chromium`(기본), `firefox`, `webkit`을 지원한다. 브라우저가 설치되지 않거나 사이트·인증을 사용할 수 없으면 차단으로 기록한다.
 - `cases`: `journey`·`states`·`keyboard` 사례를 프로젝트 뷰포트마다 실행한다. 사용자 동작 뒤 화면 assertion, 키 입력 뒤 초점 확인을 넣는다. 화면 상태 검사가 실제로 해당 없으면 `statesNotApplicable`에 사유를 적는다.
 - `steps.action`은 `goto`(같은 origin의 `/경로`), `click`, `fill`, `press`(`key`), `visible`, `text`(`value` 포함 확인), `focus`를 지원한다. `locator`는 `testId`, `label`, `role`/`name`, CSS `selector`를 지원한다. 공개 테스트 값은 `fill.value`에 두고 비밀값은 아래 승인 정책에 따라 `fill.env`로 전달한다.
 - 가로 넘침, 브라우저 콘솔 오류와 네트워크 불일치도 기록한다. iframe·팝업·다운로드·복잡한 로그인처럼 이 형식이 다루지 않는 조작은 프로젝트의 전용 Playwright 테스트와 수기 증거로 확인한다. 자동 QA 필수 프로젝트는 필수 자동 시나리오도 따로 통과해야 한다.
@@ -45,14 +44,28 @@ export FRONTEND_HARNESS_BROWSER_AUTH='{"origin":"https://qa.example.com","fillEn
 | 관측 | 분류 |
 |---|---|
 | 정확한 origin·경로와 프로젝트가 발급하는 `proof` 응답 헤더 일치 | `live` |
+| `verification: "upstream"`에서 실행자가 승인한 동일 URL로 하네스가 직접 전달한 요청 | `live` |
 | 하네스가 `mocks`로 직접 응답하거나 등록된 Mock 서버·Mock 표식과 일치 | `mock` |
+| MSW 전용 모드에서 서비스 워커 응답과 등록한 Mock 표식이 함께 관측됨 | `mock` |
 | 실제와 Mock이 모두 관측됨 | `mixed` |
 | 출처 표식 누락·충돌, 응답 실패, 등록되지 않은 fetch/XHR, 필요한 요청이 아예 없음 | `unknown` |
 | API 호출 없음이 기대값이고 관측된 대상 요청이 없음 | `none` |
 
 `mocks`는 정확한 `path`, 선택 `origin`/`method`/`status`, JSON `body`를 설정한다. 상태 코드를 의도적으로 검사하는 API 규칙에만 `allowStatuses`를 추가한다. 규칙이 겹치면 더 긴 경로를 우선한다. `requireLiveApi: true`일 때 수기 `live`, Mock, 혼합, 미확인은 통과하지 않는다.
 
-판정 범위는 실행한 화면에서 **브라우저가 관측한 요청과 신뢰할 수 있게 구성한 표식**이다. 같은 origin에 프록시·SSR·Mock이 섞여도 서버가 출처를 드러내지 않으면 자동으로 확인할 수 없다. 브라우저 내부 대체 응답이나 서버 내부 호출까지 탐지한다고 가정하지 않는다. 서비스 워커는 이 실행기에서 차단하므로 MSW 브라우저 모드를 테스트하려면 전용 테스트를 쓰거나 HTTP Mock 서버 또는 하네스 fixture를 사용한다. [Playwright 네트워크 문서](https://playwright.dev/docs/network)에 관측 범위가 설명돼 있다.
+응답 헤더를 추가하기 어려운 테스트 API는 규칙의 `source: "live"`, `verification: "upstream"`을 설정한다. 실행자가 시나리오 바깥에서 같은 origin과 경로를 승인하면 하네스가 Playwright `route.fetch`로 그 요청을 직접 전송한다. 리다이렉트와 응답 실패는 통과하지 않는다. 직접 전달이 입증하는 범위는 승인된 서버에 요청이 도달했다는 사실이다. 운영자가 실제 테스트 백엔드를 확인한 뒤 승인한다. [Playwright Route 문서](https://playwright.dev/docs/api/class-route#route-fetch)
+
+```sh
+export FRONTEND_HARNESS_LIVE_UPSTREAMS='[{"origin":"https://qa-api.example.com","pathPrefix":"/api/orders"}]'
+```
+
+헤더나 직접 전달 증거가 없는 응답은 `unknown`이다. 브라우저의 실제 프록시·CORS 동작 자체가 인수 조건이면 기존 헤더 방식과 앱 전용 테스트로 확인한다.
+
+## MSW 브라우저 모드
+
+앱이 비운영 환경에서 MSW의 `setupWorker`를 시작한다. 시나리오에 `serviceWorkers: "msw"`, `engine: "chromium"`, `api.expect: "mock"`을 설정한다. 필수 Mock 규칙에 `mockProof`를 두고 해당 핸들러가 같은 헤더를 응답에 넣도록 한다. 예를 들어 `{ "name": "x-qa-mock", "value": "msw" }`를 두 곳에 지정한다.
+
+이 모드는 서비스 워커가 응답했고 표식까지 일치한 요청을 인정한다. 로그인 상태·환경변수 입력·성능 측정은 별도 시나리오에서 실행한다. Firefox와 WebKit의 같은 화면 QA에는 하네스 fixture 또는 HTTP Mock 서버를 사용한다. [MSW 브라우저 설정](https://mswjs.io/guides/integrations/browser) · [Playwright 서비스 워커 범위](https://playwright.dev/docs/service-workers)
 
 ## 성능 측정
 
@@ -62,7 +75,7 @@ export FRONTEND_HARNESS_BROWSER_AUTH='{"origin":"https://qa.example.com","fillEn
 node .agents/skills/frontend-workflow-harness/scripts/browser-runner.mjs --from qa/production-performance.json --mode performance
 ```
 
-이 모드는 `target: production`, 승인된 운영 `baseUrl`, `performance.pages`의 페이지 ID·`path`·선택 `ready` locator와 지표 예산으로 설정할 수 있다. 운영 대상에서 조작 시나리오·로그인 상태·fixture 사용을 거부한다. 라우팅으로 관측한 GET/HEAD/OPTIONS 외 요청과 WebSocket은 차단한다. 읽기 전용 탐색이 가능한 페이지를 선택한다. 리다이렉트 이후 요청과 GET의 서버 부작용은 이 정책만으로 검증할 수 없다.
+운영 설정도 `browser-init --url 승인된URL --target production --file qa/production-performance.json`으로 생성할 수 있다. 정확히 지정 URL에서 측정이 끝난 표본만 반영한다. 로그인 페이지나 다른 경로로 이동하면 `unexpected-url`로 남긴다. 운영 대상에서 조작 시나리오·로그인 상태·fixture 사용을 거부한다. 라우팅으로 관측한 GET/HEAD/OPTIONS 외 요청과 WebSocket은 차단한다. 읽기 전용 탐색이 가능한 페이지를 선택한다. 리다이렉트 이후 요청과 GET의 서버 부작용은 이 정책만으로 검증할 수 없다.
 
 각 페이지를 새 브라우저 컨텍스트에서 반복 탐색하고 설정된 관측 시간 뒤 TTFB·FCP·LCP·CLS·load를 수집한다. 라우팅으로 브라우저 캐시는 꺼지며 네트워크·CPU 제한은 적용하지 않는다. 개별 표본·중앙값·표본 수와 예산을 기록하며, 예산 지표의 표본이 누락되거나 중앙값이 초과되면 실패한다. 엔진에서 지원하지 않는 지표는 미측정이다. 이 값은 [브라우저 탐색 타이밍](https://w3c.github.io/navigation-timing/)을 쓰는 실험실 값이며 실제 사용자 p75·INP나 운영 SLA를 대신하지 않는다. 운영 측정 결과는 현재 코드가 배포됐다는 증거가 아니다.
 

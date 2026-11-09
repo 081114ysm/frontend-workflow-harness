@@ -1,6 +1,6 @@
 {
   "name": "frontend-workflow-harness",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "기능 단위 프론트엔드 개발 규칙과 증거 기반 진행 도구",
@@ -16,6 +16,8 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "esbuild": "0.28.2",
+    "msw": "3.0.4",
     "playwright": "1.65.0"
   }
 }

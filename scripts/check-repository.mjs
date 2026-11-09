@@ -35,15 +35,16 @@ for (const file of files) {
 for (const file of ['SKILL.md', 'LICENSE', 'README.md', 'scripts/harness.mjs', 'scripts/install.mjs', 'config/project.example.json', 'docs/templates/feature-plan.md']) {
   assert(fs.existsSync(path.join(root, file)), `배포 필수 파일 누락: ${file}`);
 }
-const skill = fs.readFileSync(path.join(root, 'SKILL.md'), 'utf8');
+const readText = file => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
+const skill = readText('SKILL.md');
 assert(/^---\nname: frontend-workflow-harness\ndescription: .+\nlicense: MIT\n---/.test(skill), '스킬 frontmatter 확인');
 assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'config/project.example.json'))).configured, false, '설정 예시는 자동 활성화하면 안 됨');
-assert.equal(fs.readFileSync(path.join(root, '.coderabbit.yaml'), 'utf8'), codeRabbitYaml('main', 'main'), 'CodeRabbit 배포 설정과 생성 원본이 다름');
+assert.equal(readText('.coderabbit.yaml'), codeRabbitYaml('main', 'main'), 'CodeRabbit 배포 설정과 생성 원본이 다름');
 for (const [canonical, github] of [
   ['docs/templates/issue-feature.md', '.github/ISSUE_TEMPLATE/feature.md'],
   ['docs/templates/issue-bug.md', '.github/ISSUE_TEMPLATE/bug.md'],
   ['docs/templates/pull-request.md', '.github/PULL_REQUEST_TEMPLATE.md'],
 ]) {
-  assert.equal(fs.readFileSync(path.join(root, canonical), 'utf8'), fs.readFileSync(path.join(root, github), 'utf8'), `GitHub 템플릿 불일치: ${github}`);
+  assert.equal(readText(canonical), readText(github), `GitHub 템플릿 불일치: ${github}`);
 }
 console.log(JSON.stringify({ status: 'passed', localLinks: links, jsonFiles: json, syntaxChecked: scripts }, null, 2));
