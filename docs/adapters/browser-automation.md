@@ -66,4 +66,6 @@ node .agents/skills/frontend-workflow-harness/scripts/browser-runner.mjs --from 
 
 각 페이지를 새 브라우저 컨텍스트에서 반복 탐색하고 설정된 관측 시간 뒤 TTFB·FCP·LCP·CLS·load를 수집한다. 라우팅으로 브라우저 캐시는 꺼지며 네트워크·CPU 제한은 적용하지 않는다. 개별 표본·중앙값·표본 수와 예산을 기록하며, 예산 지표의 표본이 누락되거나 중앙값이 초과되면 실패한다. 엔진에서 지원하지 않는 지표는 미측정이다. 이 값은 [브라우저 탐색 타이밍](https://w3c.github.io/navigation-timing/)을 쓰는 실험실 값이며 실제 사용자 p75·INP나 운영 SLA를 대신하지 않는다. 운영 측정 결과는 현재 코드가 배포됐다는 증거가 아니다.
 
+`browser-run`은 기본 QA 실행 제한 5분에 페이지별 탐색·준비 조건·관측 시간을 반복 횟수만큼 더해 전체 제한을 정한다.
+
 별도 성능 모드의 JSON은 표준 출력에 기록된다. 저장하려면 위 명령에 `> qa/production-performance-result.json`을 붙인다. 측정 또는 예산 검사가 실패하면 종료 코드는 1이다. 기능 QA에서 측정한 값은 `browser-run`이 QA.md에 자동으로 남긴다.

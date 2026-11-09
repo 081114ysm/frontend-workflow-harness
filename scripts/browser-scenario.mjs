@@ -138,6 +138,15 @@ export function parseScenario(input, widths, mode = 'qa') {
     origins };
 }
 
+/** 기본 QA 시간에 성능 탐색·대기·브라우저 컨텍스트 준비 시간을 더한다. */
+export function browserExecutionTimeout({ performance, timeoutMs } = {}) {
+  const base = 300_000;
+  if (!performance) return base;
+  const { pages, runs, settleMs } = performance;
+  const sampleCost = page => timeoutMs * (page.ready ? 2 : 1) + settleMs + 2_000;
+  return base + runs * pages.reduce((total, page) => total + sampleCost(page), 0);
+}
+
 /**
  * 실행자가 저장소 밖에서 제공한 정책과 시나리오의 자격 증명 참조를 대조한다.
  * 변수 값과 로그인 파일은 승인된 뒤에만 실행기가 읽는다.

@@ -35,6 +35,8 @@ H advance --to implement
 
 구현하고 필요한 회귀 테스트를 추가한 뒤 검사한다. 예시 테스트 fixture를 실제 증거로 복사하지 않는다.
 
+자동 브라우저 QA를 쓴다면 첫 검사 전에 [브라우저 어댑터](../docs/adapters/browser-automation.md)에 따라 앱 루트에 `qa/order-search.json`을 작성하고 실제 URL·동작·기대 결과를 확인한다. 이 파일도 코드 지문에 포함된다.
+
 ```sh
 H run all --compact
 H advance --to review
@@ -58,7 +60,7 @@ H advance --to ready
 
 검사 실행·기록과 단계 변경에 따라 `.frontend-workflow/features/42-order-search/QA.md`가 자동 저장된다. 에이전트는 QA 보고 직전에 `H qa-report`로 증거의 최신성을 다시 확인하고 이 문서를 사용자에게 보여준다. 실행하지 않은 항목은 미실행으로 남기며, 자동 관리 영역 밖의 수동 메모는 유지한다.
 
-리뷰에서 코드가 바뀌었거나 검사가 빠졌다면 `H run all --compact`를 다시 실행하고 현재 diff의 리뷰 증거를 갱신한다.
+리뷰에서 코드나 시나리오가 바뀌었거나 검사가 빠졌다면 QA에 들어가기 전에 `H run all --compact`를 다시 실행하고 현재 diff의 리뷰 증거를 갱신한다.
 
 실제 PR 생성 지시를 `evidence/pr-authorization.md`로 기록한다. 제품 코드와 설정을 커밋하고 권한 범위에서 실제 PR을 생성한 뒤 반환된 URL을 사용한다. 아래 URL은 형식 예시다.
 
@@ -69,7 +71,7 @@ git commit -m 'feat(order): 주문 검색과 오류 복구 추가'
 H advance --to pr --url https://github.com/OWNER/REPO/pull/99
 ```
 
-위 시나리오 파일은 [브라우저 자동화](../docs/adapters/browser-automation.md)에 따라 앱에서 설정한다. 수기 검증을 허용하는 앱은 `H record --kind browser --file .frontend-workflow/features/42-order-search/evidence/browser.json`을 사용할 수 있다.
+수기 검증을 허용하는 앱은 `H record --kind browser --file .frontend-workflow/features/42-order-search/evidence/browser.json`을 사용할 수 있다.
 
 현재 PR head의 CI와 CodeRabbit 결과를 읽고 지적을 처리한다. 사용자 지시에 따라 GitHub에서 머지한 뒤 `finalize`로 실제 상태와 필수 체크를 확인한다.
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseScenario, authorizeBrowserCredentials, matchRule, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
+import { parseScenario, browserExecutionTimeout, authorizeBrowserCredentials, matchRule, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
 import { measureBudget } from '../scripts/browser-runner.mjs';
 
 const proof = { name: 'x-api-mode', value: 'live-v1' };
@@ -36,6 +36,17 @@ test('성능 중앙값과 측정 불가 예산의 실패를 구분한다', () =>
   assert.equal(measureBudget(samples, { ttfbMs: 40 }, 3).passed, true);
   assert.equal(measureBudget(samples, { lcpMs: 1000 }, 3).passed, false);
   assert.equal(measureBudget(samples.slice(1), {}, 3).passed, false);
+});
+
+test('성능 측정 실행 제한에 허용된 탐색·준비 조건·대기 횟수를 반영한다', () => {
+  const base = { schemaVersion: 1, baseUrl: 'http://localhost:3000', timeoutMs: 30000 };
+  const pages = Array.from({ length: 8 }, (_, index) => ({
+    id: 'page-' + index, path: '/' + index, ...(index === 0 ? { ready: { selector: 'main' } } : {}),
+  }));
+  const config = parseScenario({ ...base, performance: { pages, runs: 9, settleMs: 5000 } }, [320], 'performance');
+  assert.equal(browserExecutionTimeout(), 300000);
+  const navigationAndSettling = 9 * (8 * (30000 + 5000) + 30000);
+  assert(browserExecutionTimeout(config) > 300000 + navigationAndSettling);
 });
 
 test('시나리오의 외부 이동·운영 조작·근거 없는 live 규칙을 거부한다', () => {

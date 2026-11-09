@@ -10,6 +10,7 @@ import {
   fingerprint, planHash, configHash, approvalValid, assertPlan, evidenceFile,
   evidenceValid, validateReport, assertReady, assertCleanSource, withLock, activeState, terminal, restoreState, sourceFiles, BROWSER_CHECKS, requiredGithubChecks,
 } from './lib.mjs';
+import { parseScenario, browserExecutionTimeout } from './browser-scenario.mjs';
 
 const bundle = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -184,8 +185,11 @@ function runBrowser(root, state, config, options) {
   const relative = path.relative(root, scenario).split(path.sep).join('/');
   ensure(fs.existsSync(scenario) && fs.realpathSync(scenario) === scenario && sourceFiles(root).includes(relative), '코드 지문에 포함되는 일반 시나리오 JSON 파일 필요');
   const before = fingerprint(root);
+  let timeout = browserExecutionTimeout();
+  try { timeout = browserExecutionTimeout(parseScenario(readJson(scenario), config.context.viewports)); }
+  catch { /* The worker reports sanitized scenario errors. */ }
   const child = spawnSync(process.execPath, [path.join(bundle, 'scripts/browser-runner.mjs'), '--root', root, '--from', relative, '--widths', JSON.stringify(config.context.viewports)], {
-    cwd: root, encoding: 'utf8', shell: false, timeout: 300000, maxBuffer: 4 * 1024 * 1024,
+    cwd: root, encoding: 'utf8', shell: false, timeout, maxBuffer: 4 * 1024 * 1024,
   });
   let report;
   if ([0, 1].includes(child.status) && !child.error) {
