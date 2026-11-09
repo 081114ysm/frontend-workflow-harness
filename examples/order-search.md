@@ -36,7 +36,7 @@ H advance --to implement
 구현하고 필요한 회귀 테스트를 추가한 뒤 검사한다. 예시 테스트 fixture를 실제 증거로 복사하지 않는다.
 
 ```sh
-H run all
+H run all --compact
 H advance --to review
 ```
 
@@ -50,13 +50,15 @@ H advance --to qa
 실제 브라우저에서 인수 조건과 지원 viewport·키보드·console·network를 확인한다. 스크린샷·trace·결과 파일을 evidence에 저장하고 `browser.json`에 연결한다. Mock이면 apiMode를 mock으로 쓴다. API가 준비되지 않았다면 실제 연동 완료라고 쓰지 않는다.
 
 ```sh
-H run all
+H status --compact
 H browser-run --from qa/order-search.json
 H qa-report
 H advance --to ready
 ```
 
 검사 실행·기록과 단계 변경에 따라 `.frontend-workflow/features/42-order-search/QA.md`가 자동 저장된다. 에이전트는 QA 보고 직전에 `H qa-report`로 증거의 최신성을 다시 확인하고 이 문서를 사용자에게 보여준다. 실행하지 않은 항목은 미실행으로 남기며, 자동 관리 영역 밖의 수동 메모는 유지한다.
+
+리뷰에서 코드가 바뀌었거나 검사가 빠졌다면 `H run all --compact`를 다시 실행하고 현재 diff의 리뷰 증거를 갱신한다.
 
 실제 PR 생성 지시를 `evidence/pr-authorization.md`로 기록한다. 제품 코드와 설정을 커밋하고 권한 범위에서 실제 PR을 생성한 뒤 반환된 URL을 사용한다. 아래 URL은 형식 예시다.
 
@@ -77,4 +79,4 @@ G finalize
 G issue-sync
 ```
 
-PR 전달까지만 요청된 작업은 pr 단계에 그대로 남긴다. 세션이 바뀌면 `H status`와 실제 Git·PR 상태를 읽고 이어간다. 승인된 검색 계약이 바뀌면 `H replan --reason '검색 URL 계약 변경'`으로 재검토한다.
+PR 전달까지만 요청된 작업은 pr 단계에 그대로 남긴다. 세션이 바뀌면 `H status --compact`에서 시작하고 필요할 때 실제 Git·PR 상태를 대조한다. 승인된 검색 계약이 바뀌면 `H replan --reason '검색 URL 계약 변경'`으로 재검토한다.

@@ -13,7 +13,7 @@
 
 | 순서 | 에이전트가 수행 | 사용자에게 보여줄 것 |
 |---|---|---|
-| 1 | 활성 이슈·브랜치·이전 PR과 로컬 증거를 읽어 재개 여부 판단 | 이미 진행 중인 작업이 있다면 현재 상태 |
+| 1 | `status --compact`로 재개 여부와 다음에 열 파일 확인 | 이미 진행 중인 작업이 있다면 현재 상태 |
 | 2 | 관련 코드·화면·API를 읽고 범위 하나로 이슈 생성 | 이슈 URL과 포함·제외 범위 |
 | 3 | 통합 브랜치에서 기능 브랜치 생성, start, 기획서·인수 조건·상태 작성 | 검토 가능한 기획서 링크 |
 | 4 | 현재 기획서에 대한 실제 승인 확인·기록 | **기획 승인 게이트**. 승인 전 기능 구현 금지 |
@@ -33,11 +33,12 @@
 아래 `H`와 `G`는 번들 안의 `scripts/harness.mjs`와 `scripts/github.mjs`를 뜻한다. 설치 위치는 SKILL.md 기준으로 해석하고 대상 앱 루트에서 실행한다.
 
 ```text
+H status --compact → 최초 설정 또는 현재 작업 재개 여부 확인
 G check
 G issue-create --key auth-login-20261028 --title 로그인 오류 복구 --body-file 요청본문.md
 이슈 번호 확인 → 기능 브랜치 → H start --id 42-auth-login --issue 실제URL
 기획서 작성 → 실제 승인 → H approve --gate plan ... → H advance --to implement
-구현 → H run all → H advance --to review → 실제 리뷰 기록
+구현 → H run all --compact → H advance --to review → 실제 리뷰 기록
 H advance --to qa → H browser-run --from qa/browser.json → H qa-report → H advance --to ready
 QA 결과 보고 → 실제 PR 승인 → H approve --gate pr ...
 범위에 맞춰 커밋·push → G pr-create --title ... --body-file PR본문.md

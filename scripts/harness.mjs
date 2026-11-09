@@ -18,6 +18,11 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith('--')) { values._.push(argv[i]); continue; }
     const key = argv[i].slice(2);
+    if (key === 'compact') {
+      ensure(!Object.hasOwn(values, key), '--compact 옵션 중복');
+      values.compact = true;
+      continue;
+    }
     ensure(!Object.hasOwn(values, key) && argv[i + 1] && !argv[i + 1].startsWith('--'), `옵션 값이 필요하거나 중복됨: --${key}`);
     values[key] = argv[++i];
   }
@@ -86,7 +91,8 @@ function recordApproval(root, state, options) {
   return { gate, recorded: true, note: '실제 사용자 지시의 기록이며 승인자를 인증하는 도구는 아님. 에이전트가 승인 문구를 만들어서는 안 됨.' };
 }
 
-function runCheck(root, state, config, name) {
+/** 실제 검사와 증거는 동일하게 남기고, 요약 모드에서는 원시 로그를 출력하지 않는다. */
+function runCheck(root, state, config, name, compact) {
   ensure(['implement', 'review', 'qa', 'ready', 'pr'].includes(state.stage), '구현 시작 후 검사할 것');
   assertPlan(root, state, config);
   const command = config.checks[name];
@@ -108,14 +114,20 @@ function runCheck(root, state, config, name) {
   };
   const file = `${featureDirectory(state)}/evidence/check-${name}.json`;
   // Store raw output only in ignored logs: it may contain private URLs or test data.
-  fs.writeFileSync(inside(root, `${featureDirectory(state)}/evidence/check-${name}.log`), (result.stdout || '') + (result.stderr || ''));
+  const log = `${featureDirectory(state)}/evidence/check-${name}.log`;
+  fs.writeFileSync(inside(root, log), (result.stdout || '') + (result.stderr || ''));
   writeJson(inside(root, file), record);
   record.files = [evidenceFile(root, state, file)];
   state.checks[name] = record;
   saveState(root, state, 'run', { name, passed });
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  return { ...record, log: `${featureDirectory(state)}/evidence/check-${name}.log` };
+  if (!compact) {
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    return { name, ...record, log };
+  }
+  if (passed) return { name, passed };
+  const reason = record.sourceChanged ? 'source-changed' : result.error?.code ?? (record.signal ? 'signal' : 'exit-code');
+  return { name, passed, exitCode: record.exitCode, signal: record.signal, reason, log };
 }
 
 /**
@@ -227,6 +239,49 @@ function advance(root, state, config, options) {
   return { stage: next, pullRequestUrl: state.pullRequestUrl || null };
 }
 
+/** 상태 본문을 펼치기 전에 필요한 파일과 검증 상태만 보여준다. */
+function compactStatus(root) {
+  const file = inside(root, CONFIG);
+  if (!fs.existsSync(file)) return { configured: false, config: CONFIG };
+  const stored = readJson(file);
+  if (stored?.configured === false) return { configured: false, config: CONFIG };
+  const config = validateConfig(stored);
+  const state = activeState(root, config);
+  const branch = git(root, ['branch', '--show-current']);
+  if (!state) return { configured: true, active: false, branch };
+
+  const hasPlan = fs.existsSync(inside(root, state.plan));
+  const outcome = record => {
+    if (!record) return 'missing';
+    if (!hasPlan || !evidenceValid(root, state, record)) return 'stale';
+    return record.passed === false ? 'failed' : 'passed';
+  };
+  const checks = Object.fromEntries(Object.keys(config.checks).map(name => [name, outcome(state.checks[name])]));
+  const kinds = new Set(['review', ...Object.keys(state.evidence)]);
+  if (state.qaProfile?.kind !== 'non-ui') kinds.add('browser');
+  if (['pr', 'done'].includes(state.stage)) {
+    if (config.requireCi) kinds.add('ci');
+    if (config.codeRabbit?.required) kinds.add('coderabbit');
+    kinds.add('merge');
+  }
+  const evidence = Object.fromEntries([...kinds].map(kind => {
+    const result = outcome(state.evidence[kind]);
+    return [kind, result === 'missing' && state.qaFailures?.[kind] ? 'failed' : result];
+  }));
+  const approvals = Object.fromEntries(['plan', 'pr'].map(gate => {
+    if (!config.approval[gate]) return [gate, 'not-required'];
+    if (!state.approvals[gate]) return [gate, 'missing'];
+    return [gate, hasPlan && approvalValid(root, state, gate) ? 'valid' : 'stale'];
+  }));
+  return {
+    configured: true, id: state.id, stage: state.stage, branch: state.branch,
+    ...(branch !== state.branch ? { actualBranch: branch } : {}),
+    issue: state.issue, pullRequestUrl: state.pullRequestUrl, plan: state.plan, hasPlan,
+    qaReport: `${featureDirectory(state)}/QA.md`, qaProfile: state.qaProfile?.kind ?? 'browser',
+    approvals, checks, evidence,
+  };
+}
+
 /**
  * CLI 인자를 해석하고 프로젝트 경로에 맞는 명령을 실행한다.
  * 조회 명령은 파일을 변경하지 않으며 상태 변경 명령은 프로젝트 lock 안에서 실행한다.
@@ -238,10 +293,11 @@ function main() {
   const root = fs.realpathSync(path.resolve(options.root || process.cwd()));
   if (!command || command === 'help') return {
     usage: 'node scripts/harness.mjs [--root 프로젝트] 명령 [옵션]',
-    commands: ['doctor', 'init', 'configure --from 설정.json', 'start --id 42-auth-login [--qa non-ui --reason 사유]', 'restore --id 기능ID', 'status', 'qa-report', 'browser-run --from 시나리오.json', 'approve --gate plan|pr --by 승인자 --file 증거경로', 'advance --to implement|review|qa|ready|pr|delivered [--url PR주소]', 'run 검사이름|all', 'record --kind review|browser|coderabbit --file 증거.json', 'replan --reason 변경이유', 'issue-body'],
+    commands: ['doctor', 'init', 'configure --from 설정.json', 'start --id 42-auth-login [--qa non-ui --reason 사유]', 'restore --id 기능ID', 'status [--compact]', 'qa-report', 'browser-run --from 시나리오.json', 'approve --gate plan|pr --by 승인자 --file 증거경로', 'advance --to implement|review|qa|ready|pr|delivered [--url PR주소]', 'run 검사이름|all [--compact]', 'record --kind review|browser|coderabbit --file 증거.json', 'replan --reason 변경이유', 'issue-body'],
   };
   if (command === 'doctor') return doctor(root);
   if (command === 'status') {
+    if (options.compact) return compactStatus(root);
     const config = loadConfig(root); const state = loadState(root);
     return {
       ...state, actualBranch: git(root, ['branch', '--show-current']), currentFingerprint: fingerprint(root),
@@ -290,7 +346,8 @@ function main() {
       const names = argument === 'all' ? Object.keys(config.checks) : [argument];
       const records = [];
       for (const name of names) {
-        const record = runCheck(root, state, config, name); records.push({ name, ...record });
+        const record = runCheck(root, state, config, name, options.compact);
+        records.push(record);
         if (!record.passed) { process.exitCode = 1; break; }
       }
       return records;

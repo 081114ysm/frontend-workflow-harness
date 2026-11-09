@@ -103,11 +103,11 @@ node .agents/skills/frontend-workflow-harness/scripts/setup-github.mjs
 | `start --id 42-order-search --issue URL` | 현재 기능 브랜치에서 상태·계획·증거 틀 생성 |
 | `start --id 43-order-parser --qa non-ui --reason 사유` | 허용된 프로젝트에서 실제 test 검사와 리뷰를 요구하는 비화면 QA 선택 |
 | `restore --id 42-order-search` | 기능 브랜치에서 보관한 상태를 로컬 활성 상태로 복구 |
-| `status` | 현재 단계와 승인·검사·증거의 유효성 표시 |
+| `status --compact` | 현재 단계, 확인할 파일 경로, 승인·검사·증거의 상태만 표시. 전체 상태는 `status` |
 | `qa-report` | 현재 기록과 증거 유효성으로 기능별 `QA.md` 재생성. 검증을 새로 실행하지 않음 |
 | `approve --gate plan --by 승인자 --file 근거.md` | 실제 사용자 지시를 현재 기획서·설정에 연결 |
 | `advance --to implement` | 조건을 확인하고 바로 다음 단계로 이동 |
-| `run all` 또는 `run test` | 설정한 실제 명령을 실행, 종료 코드·지문 기록 |
+| `run all --compact` 또는 `run test --compact` | 실제 명령과 증거 저장은 동일하게 실행하고 검사 결과와 실패 로그 경로만 표시. 상세 출력은 `--compact` 생략 |
 | `browser-run --from qa/browser.json` | 설정한 브라우저 여정·API·성능 실행 및 증거 저장 |
 | `record --kind review --file 보고서.json` | review·수기 browser·coderabbit 증거 연결 |
 | `advance --to delivered` | GitHub를 사용하지 않는 작업의 로컬 전달 완료 |
@@ -150,7 +150,7 @@ examples/                   실제 적용 절차와 인수 조건 예시
 .coderabbit.yaml            이 저장소의 자동 리뷰 설정
 ```
 
-기능 개발은 [전체 흐름](docs/rules/workflow.md) → [프론트엔드 계약](docs/rules/frontend-contract.md) → 작업에 필요한 어댑터 → [리뷰](docs/rules/review.md)·[검증](docs/rules/verification.md) → [GitHub 운영](docs/rules/github.md) 순으로 필요한 부분만 읽는다.
+기능 개발 중에는 [스킬의 단계별 안내](SKILL.md)를 따라 현재 판단에 필요한 문서와 코드만 읽는다.
 
 ## 검증과 한계
 

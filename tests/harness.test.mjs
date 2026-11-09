@@ -283,6 +283,31 @@ test('run all은 첫 실패 뒤 다른 검사를 실행하지 않는다', t => {
   f.implement(); assert.equal(f.run('run', 'all').status, 1); assert.equal(f.state().checks.extra, undefined);
 });
 
+test('요약 검사는 로그를 펼치지 않고 실제 결과와 실패 로그 경로를 반환한다', t => {
+  const output = 'FIXTURE_OUTPUT_NOT_FOR_SUMMARY';
+  const f = fixture(t, { checks: {
+    test: { argv: [process.execPath, '-e', `console.log('${output}')`], cwd: '.', timeoutMs: 1000 },
+    extra: { argv: [process.execPath, '-e', `console.error('${output}'); process.exit(7)`], cwd: '.', timeoutMs: 1000 },
+    later: { argv: [process.execPath, '-e', 'process.exit(0)'], cwd: '.', timeoutMs: 1000 },
+  } });
+  f.implement();
+  const run = f.run('run', 'all', '--compact');
+  assert.equal(run.status, 1);
+  assert(!run.stdout.includes(output));
+  assert.equal(run.stderr, '');
+  const [passed, failed, later] = JSON.parse(run.stdout);
+  assert.deepEqual(passed, { name: 'test', passed: true });
+  assert.equal(failed.name, 'extra');
+  assert.equal(failed.passed, false);
+  assert.equal(failed.exitCode, 7);
+  assert.equal(failed.reason, 'exit-code');
+  assert.equal(fs.readFileSync(path.join(f.root, failed.log), 'utf8').trim(), output);
+  assert.equal(later, undefined);
+  assert.equal(f.state().checks.test.passed, true);
+  assert.equal(f.state().checks.extra.exitCode, 7);
+  assert.match(f.ok('run', 'test'), /FIXTURE_OUTPUT_NOT_FOR_SUMMARY/);
+});
+
 test('shell 치환과 파이프 문자를 인자로만 전달한다', t => {
   const f = fixture(t, { checks: { test: { argv: [process.execPath, '-e', 'if(process.argv[1] !== "$(touch PWNED); echo x | cat") process.exit(1)', '$(touch PWNED); echo x | cat'], cwd: '.', timeoutMs: 1000 } } });
   f.implement(); f.ok('run', 'test'); assert.equal(fs.existsSync(path.join(f.root, 'PWNED')), false);
@@ -292,6 +317,32 @@ test('코드가 바뀌면 기존 검사와 리뷰가 무효다', t => {
   const f = fixture(t); f.qa(); f.ok('run', 'all'); f.browser();
   f.write('app.js', 'export const value = 2;\n'); f.bad(/검사 통과/, 'advance', '--to', 'ready');
   const status = JSON.parse(f.ok('status')); assert.equal(status.validChecks.test, false); assert.equal(status.validEvidence.review, false);
+});
+
+test('요약 상태는 단계와 증거의 유효성을 보여주고 큰 보고서 본문은 펼치지 않는다', t => {
+  const f = fixture(t);
+  assert.equal(JSON.parse(f.ok('status', '--compact')).active, false);
+  f.ready();
+  const detail = 'DETAIL_ONLY_IN_FULL_REPORT '.repeat(300);
+  const checks = Object.fromEntries(BROWSER_CHECKS.map(name => [name, { status: 'pass', detail }]));
+  f.browser({ checks });
+  const stored = f.state();
+  const full = f.ok('status');
+  const raw = f.ok('status', '--compact');
+  assert.deepEqual(f.state(), stored);
+  const compact = JSON.parse(raw);
+  assert.equal(compact.stage, 'ready');
+  assert.equal(compact.approvals.plan, 'valid');
+  assert.equal(compact.checks.test, 'passed');
+  assert.equal(compact.evidence.browser, 'passed');
+  assert.equal(compact.qaReport, '.frontend-workflow/features/42-search/QA.md');
+  assert(full.includes(detail));
+  assert(!raw.includes('DETAIL_ONLY_IN_FULL_REPORT'));
+  assert(Buffer.byteLength(raw) < Buffer.byteLength(full));
+  f.write('app.js', 'export const value = 2;\n');
+  const stale = JSON.parse(f.ok('status', '--compact'));
+  assert.equal(stale.checks.test, 'stale');
+  assert.equal(stale.evidence.browser, 'stale');
 });
 
 test('증거 파일을 사후 수정하면 무효다', t => {

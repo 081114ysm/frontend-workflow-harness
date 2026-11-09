@@ -2,7 +2,7 @@
 
 현재 체크아웃의 활성 상태는 Git에서 제외하는 `.frontend-workflow/runtime/active.json`에 저장한다. 버전 관리하는 기능별 상태는 `.frontend-workflow/features/{id}/state.json`이다. GitHub 이슈는 공유용 요약이다. 통합 브랜치에 머지된 과거 기능의 보관 기록은 새 기능의 착수를 막지 않는다.
 
-GitHub 모드에서는 에이전트가 단계가 바뀔 때 `github.mjs issue-sync`로 이슈 체크리스트와 결과 경로를 갱신한다. 재개 시에는 `github.mjs resume`으로 이슈부터 읽고 실제 로컬·버전 관리 증거와 대조한다. 원격 블록이 다른 곳에서 바뀌었다면 자동 덮어쓰기를 멈춘다. 원격 편집은 API 차원의 원자적 compare-and-swap이 아니므로 여러 에이전트가 같은 이슈를 동시에 갱신하지 않는다.
+GitHub 모드에서는 에이전트가 단계가 바뀔 때 `github.mjs issue-sync`로 이슈 체크리스트와 결과 경로를 갱신한다. 로컬 요약에서 이슈 상태를 대조해야 할 때 `github.mjs resume`을 사용한다. 원격 블록이 다른 곳에서 바뀌었다면 자동 덮어쓰기를 멈춘다. 원격 편집은 API 차원의 원자적 compare-and-swap이 아니므로 여러 에이전트가 같은 이슈를 동시에 갱신하지 않는다.
 
 ## 기록할 것
 
@@ -19,11 +19,11 @@ GitHub 모드에서는 에이전트가 단계가 바뀔 때 `github.mjs issue-sy
 ## 재개
 
 ```sh
-node scripts/harness.mjs status
+node scripts/harness.mjs status --compact
 git status --short
 ```
 
-대상 경로·브랜치·이슈·인수 조건·현재 diff와 증거의 유효성을 대조한다. stage가 ready여도 `validChecks`나 `validEvidence`가 false이면 다시 검증한다. 코드가 바뀌면 기존 지문과 일치하지 않는다. 기획서·설정 변경도 승인을 무효로 한다.
+요약에 나온 기획서와 현재 단계에 필요한 증거만 연다. ready여도 검사나 증거가 `stale`, `failed`, `missing`이면 필요한 검증을 다시 확인한다. 전체 이력이나 증거 파일 해시가 필요할 때는 `status`를 사용한다. 코드가 바뀌면 기존 지문과 일치하지 않으며 기획서·설정 변경은 승인도 무효로 한다.
 
 새 체크아웃에서는 원래 기능 브랜치에서 `harness.mjs restore --id 기능ID`로 보관 상태를 다시 활성화한다. 보관 상태가 ready이고 PR이 이미 있으면 `github.mjs pr-recover --url 실제PR주소`로 원격 head와 base를 대조해 연결한다. 예전 `.frontend-workflow/state.json`은 작업 브랜치에서 읽을 수 있으며, 이미 추적 중인 파일은 이관 과정에서 보존한다.
 
