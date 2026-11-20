@@ -27,10 +27,30 @@ const html = '<!doctype html><meta charset="utf-8"><meta name="viewport" content
   'document.querySelector("#load").onclick=async()=>{out.textContent=(await (await fetch("/api/orders?token=DO_NOT_RECORD")).json()).value};' +
   'document.querySelector("#fixture").onclick=async()=>{out.textContent=(await (await fetch("/api/fixture")).json()).value};</script>';
 
+const observerWorker = `
+  self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
+  self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+  self.addEventListener('fetch', event => {
+    const url = new URL(event.request.url);
+    if (url.pathname !== '/api/orders') return;
+    event.respondWith((async () => {
+      const mode = url.searchParams.get('mode');
+      if (mode === 'background') await fetch('/api/unregistered?token=DO_NOT_RECORD');
+      if (mode === 'same-path') await fetch(event.request);
+      if (mode === 'proxy') return fetch(event.request);
+      return new Response(JSON.stringify({ value: 'Worker mock' }), {
+        headers: { 'content-type': 'application/json', 'x-qa-mock': 'msw' },
+      });
+    })());
+  });
+`;
+
 async function serverFixture(t, mswClient) {
   let marked = true; let redirectApi = false; let requests = 0; let writes = 0;
+  const apiPaths = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost');
+    if (url.pathname.startsWith('/api/') || url.pathname === '/private') apiPaths.push(url.pathname);
     if (url.pathname === '/api/write') { writes++; response.end('unexpected'); return; }
     if (url.pathname === '/api/orders') {
       requests++;
@@ -41,6 +61,43 @@ async function serverFixture(t, mswClient) {
       return;
     }
     if (url.pathname === '/favicon.ico') { response.writeHead(204).end(); return; }
+    if (url.pathname === '/api-observer-worker.js') {
+      response.setHeader('content-type', 'text/javascript');
+      response.end(observerWorker);
+      return;
+    }
+    if (url.pathname === '/sw-api') {
+      const mode = url.searchParams.get('mode') || 'mock';
+      const page = html.replace('id="load"', 'id="load" disabled')
+        .replace('/api/orders?token=DO_NOT_RECORD', '/api/orders?mode=' + mode);
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(page + `<script>
+        (async () => {
+          await navigator.serviceWorker.register('/api-observer-worker.js');
+          await navigator.serviceWorker.ready;
+          if (!navigator.serviceWorker.controller) await new Promise(resolve => {
+            navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+          });
+          document.getElementById('load').disabled = false;
+        })();
+      </script>`);
+      return;
+    }
+    if (url.pathname === '/path-probe') {
+      const pathname = url.searchParams.get('path');
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<label>Filter <input></label><button id="load">Load</button><output data-testid="result">Idle</output>' +
+        '<script>document.getElementById("load").onclick=async()=>{const out=document.querySelector("output");' +
+        'try{out.textContent=(await(await fetch(' + JSON.stringify(pathname) + ')).json()).value}' +
+        'catch{out.textContent="Request blocked"}}</script>');
+      return;
+    }
+    if (url.pathname.startsWith('/api/') || url.pathname === '/private') {
+      response.setHeader('content-type', 'application/json');
+      response.end('{"value":"Path response"}');
+      return;
+    }
     if (url.pathname === '/redirect-page') { response.writeHead(302, { location: '/' }).end(); return; }
     if (mswClient && url.pathname === '/mockServiceWorker.js') {
       response.setHeader('content-type', 'text/javascript');
@@ -79,7 +136,7 @@ async function serverFixture(t, mswClient) {
   await once(server, 'listening');
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   return { origin: 'http://127.0.0.1:' + server.address().port, unmark: () => { marked = false; },
-    redirectApi: () => { redirectApi = true; }, requests: () => requests, writes: () => writes };
+    redirectApi: () => { redirectApi = true; }, requests: () => requests, writes: () => writes, apiPaths: () => [...apiPaths] };
 }
 
 function scenario(origin, value = 'Network response') {
@@ -212,12 +269,67 @@ test('실제 MSW 서비스 워커의 표식 있는 응답만 mock으로 인정�
   assert.equal(mock.apiMode, 'mock', JSON.stringify(mock));
   assert.equal(mock.checks.journey.status, 'pass');
   assert.equal(mock.checks.network.status, 'pass');
+  assert.deepEqual(mock.automation.api.counts, { live: 0, mock: 1, unknown: 0 });
   assert.equal(server.requests(), 0);
   input.cases[0].steps[0].path = '/msw-unmarked';
   const unknown = await runBrowser({ root, input, widths: [320] });
   assert.equal(unknown.apiMode, 'unknown');
   assert.equal(unknown.checks.network.status, 'fail');
   assert.equal(server.requests(), 0);
+});
+
+test('서비스 워커의 독립 API는 누락하지 않고 페이지 대리 응답의 중복만 제거한다', { skip: engine !== 'chromium' }, async t => {
+  const server = await serverFixture(t);
+  const input = scenario(server.origin, 'Worker mock');
+  input.serviceWorkers = 'msw';
+  input.api = { expect: 'mock', rules: [{ id: 'orders', pathPrefix: '/api/orders', source: 'mock',
+    mockProof: { name: 'x-qa-mock', value: 'msw' }, required: true }] };
+  input.cases[0].steps[0].path = '/sw-api?mode=mock';
+  const mock = await runBrowser({ root, input, widths: [320] });
+  assert.equal(mock.checks.network.status, 'pass', JSON.stringify(mock));
+  assert.deepEqual(mock.automation.api.counts, { live: 0, mock: 1, unknown: 0 });
+  assert.deepEqual(server.apiPaths(), []);
+  for (const mode of ['background', 'same-path']) {
+    input.cases[0].steps[0].path = '/sw-api?mode=' + mode;
+    const observed = await runBrowser({ root, input, widths: [320] });
+    assert.equal(observed.checks.journey.status, 'pass', JSON.stringify(observed));
+    assert.equal(observed.apiMode, 'unknown');
+    assert.equal(observed.checks.network.status, 'fail');
+    assert.deepEqual(observed.automation.api.counts, { live: 0, mock: 1, unknown: 1 });
+    assert(!JSON.stringify(observed).includes('DO_NOT_RECORD'));
+  }
+  assert.deepEqual(server.apiPaths(), ['/api/unregistered', '/api/orders']);
+  input.cases[0].steps[0].path = '/sw-api?mode=proxy';
+  input.cases[0].steps.at(-1).value = 'Network response';
+  const proxied = await runBrowser({ root, input, widths: [320] });
+  assert.equal(proxied.checks.journey.status, 'pass', JSON.stringify(proxied));
+  assert.equal(proxied.checks.network.status, 'fail');
+  assert.deepEqual(proxied.automation.api.counts, { live: 0, mock: 0, unknown: 1 });
+});
+
+test('실제 ' + engine + '에서 인코딩으로 승인 경로를 벗어난 요청은 서버로 전달하지 않는다', async t => {
+  const server = await serverFixture(t);
+  const env = 'FRONTEND_HARNESS_LIVE_UPSTREAMS';
+  const previous = process.env[env];
+  t.after(() => { if (previous === undefined) delete process.env[env]; else process.env[env] = previous; });
+  process.env[env] = JSON.stringify([{ origin: server.origin, pathPrefix: '/api' }]);
+  const input = scenario(server.origin, 'Path response');
+  input.api.rules = [{ id: 'api', pathPrefix: '/api', source: 'live', verification: 'upstream', required: true }];
+  const setPath = pathname => { input.cases[0].steps[0].path = '/path-probe?path=' + encodeURIComponent(pathname); };
+  setPath('/api/items%2f1');
+  const allowed = await runBrowser({ root, input, widths: [320] });
+  assert.equal(allowed.apiMode, 'live', JSON.stringify(allowed));
+  assert.equal(allowed.checks.journey.status, 'pass');
+  assert.equal(server.apiPaths().length, 1);
+  input.cases[0].steps.at(-1).value = 'Request blocked';
+  for (const pathname of ['/api/%2e%2e%2fprivate', '/api/%252e%252e%252fprivate', '/api/%5c..%5cprivate']) {
+    setPath(pathname);
+    const blocked = await runBrowser({ root, input, widths: [320] });
+    assert.equal(blocked.checks.journey.status, 'pass', JSON.stringify(blocked));
+    assert.equal(blocked.apiMode, 'unknown');
+    assert.equal(blocked.checks.network.status, 'fail');
+    assert.equal(server.apiPaths().length, 1, pathname + ' reached the server');
+  }
 });
 
 test('운영 측정 정책은 실제 브라우저의 POST를 서버로 보내지 않고 측정을 실패로 남긴다', async t => {

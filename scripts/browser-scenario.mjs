@@ -204,6 +204,25 @@ export function matchRule(rules, url) {
   return rules.find(rule => rule.origin === url.origin && (rule.prefix === '/' || url.pathname === rule.prefix || url.pathname.startsWith(rule.prefix.replace(/\/$/, '') + '/')));
 }
 
+/** 서버의 반복 디코딩과 경로 정규화에서도 승인 범위를 벗어나지 않는 요청만 허용한다. */
+export function upstreamPathAllowed(rule, url) {
+  let pathname = url.pathname;
+  while (true) {
+    if (/[?#\u0000-\u001f\u007f]/.test(pathname)) return false;
+    try {
+      const separated = pathname.replace(/\\/g, '/');
+      const normalized = new URL(separated, url.origin);
+      const merged = new URL(separated.replace(/\/+/g, '/'), url.origin);
+      if (!matchRule([rule], normalized) || !matchRule([rule], merged)) return false;
+      const decoded = decodeURIComponent(pathname);
+      if (decoded === pathname) return true;
+      pathname = decoded;
+    } catch {
+      return false;
+    }
+  }
+}
+
 /** 응답마다 출처 근거를 확인한다. 표식이 충돌하거나 응답이 없으면 unknown이다. */
 export function classifyResponse({ rule, headers, fixture = false, serviceWorker = false, msw = false, forwarded = false, failed = false }) {
   if (failed) return { mode: 'unknown', reason: '응답 미관측' };

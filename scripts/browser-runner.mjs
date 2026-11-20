@@ -5,8 +5,8 @@ import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { inside, readJson, ensure, BROWSER_CHECKS } from './lib.mjs';
-import { METRICS, ScenarioError, parseScenario, authorizeBrowserCredentials, authorizeLiveUpstreams, pageUrl, matchRule, classifyResponse, summarizeApi } from './browser-scenario.mjs';
+import { inside, readJson, ensure, sha, BROWSER_CHECKS } from './lib.mjs';
+import { METRICS, ScenarioError, parseScenario, authorizeBrowserCredentials, authorizeLiveUpstreams, pageUrl, matchRule, upstreamPathAllowed, classifyResponse, summarizeApi } from './browser-scenario.mjs';
 
 const readMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const apiTypes = new Set(['xhr', 'fetch']);
@@ -97,9 +97,10 @@ async function runStep(page, config, step) {
 }
 
 /** 승인된 목적지에 요청을 직접 보내고 리다이렉트나 실패를 실제 응답으로 기록하지 않는다. */
-async function forwardApi(route, ledger, timeout) {
+async function forwardApi(route, rule, ledger, timeout) {
   let response;
   try {
+    ensure(upstreamPathAllowed(rule, new URL(route.request().url())), '직접 전달 API의 정규화된 경로가 승인 범위를 벗어남');
     response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout });
     if (response.status() >= 300 && response.status() < 400 && response.headers().location) {
       throw new Error('직접 전달 API의 리다이렉트 거부');
@@ -114,18 +115,38 @@ async function forwardApi(route, ledger, timeout) {
   }
 }
 
+/** 요청 식별값은 메모리 안에서 해시로 비교하고 보고서에는 남기지 않는다. */
+function responseKey(request, status) {
+  return sha(JSON.stringify([request.method(), request.url(), status, sha(request.postDataBuffer() ?? '')]));
+}
+
+/** API 대리 응답은 한 번만 집계하고 문서·리소스를 대신 받은 워커의 중복 기록은 제외한다. */
+function apiObservations(ledger) {
+  const duplicates = new Set();
+  for (const { key, item } of ledger.pageProxies) {
+    const replies = ledger.workerReplies.get(key) ?? [];
+    const index = replies.findIndex(reply => item !== null || reply.rule === null);
+    if (index >= 0) {
+      const [reply] = replies.splice(index, 1);
+      duplicates.add(item ?? reply);
+    }
+  }
+  return ledger.observations.filter(item => !duplicates.has(item));
+}
+
 /** 브라우저 컨텍스트에 요청 제한, fixture와 민감 값을 제외한 관측을 설치한다. */
 async function makeContext(browser, cfg, width, storageState, fixtures) {
   const msw = cfg.serviceWorkers === 'msw';
   const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: msw ? 'allow' : 'block', ...(storageState ? { storageState } : {}) });
-  const ledger = { requests: new Set(), fulfilled: new WeakSet(), forwarded: new WeakSet(), observations: [], blocked: 0, errors: 0 };
+  const ledger = { requests: new Set(), fulfilled: new WeakSet(), forwarded: new WeakSet(), observations: [],
+    pageProxies: [], workerReplies: new Map(), blocked: 0, errors: 0 };
   const mockFor = request => {
     if (!fixtures) return null;
     const url = new URL(request.url());
     return cfg.mocks.find(mock => mock.origin === url.origin && mock.path === url.pathname && mock.method === request.method());
   };
   const apiRule = request => matchRule(cfg.apiRules, new URL(request.url()));
-  const isApi = request => !request.serviceWorker?.() && Boolean(apiRule(request) || mockFor(request) || apiTypes.has(request.resourceType()));
+  const isApi = request => Boolean(apiRule(request) || mockFor(request) || apiTypes.has(request.resourceType()));
   context.on('request', request => { if (isApi(request)) ledger.requests.add(request); });
   context.on('requestfinished', request => ledger.requests.delete(request));
   context.on('requestfailed', request => {
@@ -136,13 +157,28 @@ async function makeContext(browser, cfg, width, storageState, fixtures) {
     const request = response.request();
     const status = response.status();
     const headers = response.headers();
-    if (!isApi(request) || status >= 300 && status < 400 && headers.location) return;
+    if (status >= 300 && status < 400 && headers.location) return;
+    if (!isApi(request)) {
+      if (!request.serviceWorker() && response.fromServiceWorker()) {
+        ledger.pageProxies.push({ key: responseKey(request, status), item: null });
+      }
+      return;
+    }
     const rule = matchRule(cfg.apiRules, new URL(response.url()));
-    ledger.observations.push({
+    const item = {
       ...classifyResponse({ rule, headers, fixture: ledger.fulfilled.has(request),
         serviceWorker: response.fromServiceWorker(), msw, forwarded: ledger.forwarded.has(request) }),
       rule: rule?.id ?? null, status, httpOk: status >= 200 && status < 400 || Boolean(rule?.statuses.includes(status)),
-    });
+    };
+    ledger.observations.push(item);
+    if (item.mode === 'unknown') {
+      const key = responseKey(request, status);
+      if (request.serviceWorker()) {
+        const replies = ledger.workerReplies.get(key) ?? [];
+        replies.push(item);
+        ledger.workerReplies.set(key, replies);
+      } else if (response.fromServiceWorker()) ledger.pageProxies.push({ key, item });
+    }
   });
   context.on('page', page => {
     page.on('pageerror', () => ledger.errors++);
@@ -161,8 +197,9 @@ async function makeContext(browser, cfg, width, storageState, fixtures) {
         ledger.fulfilled.add(request);
         return route.fulfill({ status: fixture.status, json: fixture.body });
       }
-      if (fixtures && apiTypes.has(request.resourceType()) && apiRule(request)?.verification === 'upstream') {
-        return forwardApi(route, ledger, cfg.timeoutMs);
+      const rule = apiRule(request);
+      if (fixtures && apiTypes.has(request.resourceType()) && rule?.verification === 'upstream') {
+        return forwardApi(route, rule, ledger, cfg.timeoutMs);
       }
       return route.continue();
     });
@@ -206,9 +243,10 @@ async function runCases(browser, cfg, storageState) {
       const until = Date.now() + cfg.timeoutMs;
       while (ledger.requests.size && Date.now() < until) await delay(50);
       for (const request of ledger.requests) ledger.observations.push({ mode: 'unknown', reason: '관찰 시간 안에 응답이 끝나지 않음', rule: matchRule(cfg.apiRules, new URL(request.url()))?.id ?? null, status: null, httpOk: false });
+      const observed = apiObservations(ledger);
       viewports.push(width);
-      observations.push(...ledger.observations);
-      apiByViewport.push({ viewport: width, ...summarizeApi(ledger.observations, cfg.expect, cfg.apiRules) });
+      observations.push(...observed);
+      apiByViewport.push({ viewport: width, ...summarizeApi(observed, cfg.expect, cfg.apiRules) });
       errors += ledger.errors;
       blocked += ledger.blocked;
     } finally {

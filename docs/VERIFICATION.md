@@ -16,6 +16,12 @@ npx playwright install chromium firefox webkit
 npm run test:browser
 ```
 
+Linux에서는 시스템 라이브러리까지 준비하도록 설치 명령에 `--with-deps`를 추가한다.
+
+```sh
+npx playwright install --with-deps chromium firefox webkit
+```
+
 ## 검증하는 조건
 
 - 승인 누락·기획/설정/근거 변경 시 게이트 거부.
@@ -63,6 +69,8 @@ CodeRabbit 검토 후 로컬 기본 검증 69개와 실제 Chromium 검증 4개�
 macOS에서 기본 검증 77개를 통과했다. 브라우저 통합 검증은 Chromium 6개, Firefox 5개, WebKit 5개가 통과했다. 공통 검사는 화면 조작·뷰포트, API 출처, 운영 모드의 쓰기 차단·다른 URL 거부, 인증 입력 대상 제한을 확인한다. MSW 검사는 Chromium에서 실제 서비스 워커를 실행하고 Mock 응답 표식 누락을 거부하는지 확인했다. Firefox·WebKit에서는 이 Chromium 전용 검사만 제외한다.
 
 PR #4의 `40989d4`에서 Windows Node 24 기본 검증과 Windows·Ubuntu의 브라우저 6개 작업이 모두 통과했다. Windows 검사에는 프로젝트에서 설정한 npm 명령의 실제 실행도 포함된다. [플랫폼별 CI 결과](https://github.com/081114ysm/frontend-workflow-harness/actions/runs/42571893637)
+
+2026-11-20 리뷰 수정 후 macOS에서 기본 검증 78개, Chromium 8개, Firefox·WebKit 각 6개가 통과했다. 워커의 미등록 독립 요청과 같은 API 경로의 추가 요청을 `unknown`으로 관측했고, 워커·페이지에 함께 표시되는 대리 응답은 한 번만 집계했다. 세 브라우저에서 일반 인코딩·이중 인코딩·역슬래시로 승인 범위를 벗어나려는 요청이 서버에 도달하지 않는 것을 확인했다. 승인 범위 안의 인코딩된 경로와 기존 MSW Mock QA도 통과했다. 두 서비스 워커 검사는 Chromium에서 실행했다.
 
 별도 실서버 헤더가 없는 로컬 테스트 API도 세 엔진에서 확인했다. 실행자 승인이 없으면 서버에 요청이 가지 않았고, 승인된 실행에서는 서버에 한 번 도달했다. 승인된 API가 리다이렉트했을 때는 결과가 `unknown`이었으며 리다이렉트 목적지에 요청이 가지 않았다.
 

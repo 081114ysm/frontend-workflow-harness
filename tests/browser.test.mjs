@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseScenario, browserExecutionTimeout, authorizeBrowserCredentials, authorizeLiveUpstreams, matchRule, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
+import { parseScenario, browserExecutionTimeout, authorizeBrowserCredentials, authorizeLiveUpstreams, matchRule, upstreamPathAllowed, classifyResponse, summarizeApi } from '../scripts/browser-scenario.mjs';
 import { measureBudget } from '../scripts/browser-runner.mjs';
 
 const proof = { name: 'x-api-mode', value: 'live-v1' };
@@ -87,6 +87,23 @@ test('직접 전달은 시나리오 밖에서 승인한 정확한 API 경로만 
   assert.equal(classifyResponse({ rule: upstream, headers: {} }).mode, 'unknown');
   assert.equal(classifyResponse({ rule: upstream, headers: {}, forwarded: true }).mode, 'live');
   assert.equal(classifyResponse({ rule: upstream, headers: { 'x-qa-fixture': 'on' }, forwarded: true }).mode, 'unknown');
+});
+
+test('직접 전달의 경로는 반복 디코딩과 정규화 뒤에도 승인 범위 안에 있어야 한다', () => {
+  const rule = { ...live, prefix: '/api' };
+  for (const pathname of [
+    '/api/orders/1', '/api/orders%2f1', '/api/items/%ED%95%9C%EA%B8%80', '/api/items/a%20b',
+  ]) {
+    assert.equal(upstreamPathAllowed(rule, new URL(pathname + '?page=1', live.origin)), true, pathname);
+  }
+  for (const pathname of [
+    '/api/%2e%2e%2fprivate', '/api/%2E%2E%2Fprivate', '/api/%252e%252e%252fprivate',
+    '/api/%5c..%5cprivate', '/api/x%2f..%2f..%2fprivate', '/api/%00orders',
+    '/api/orders%3f/../../private', '/api/broken%escape', '/api-other/orders',
+  ]) {
+    assert.equal(upstreamPathAllowed(rule, new URL(pathname, live.origin)), false, pathname);
+  }
+  assert.equal(upstreamPathAllowed(rule, new URL('http://localhost:3001/api/orders')), false);
 });
 
 test('MSW는 서비스 워커와 Mock 표식이 함께 있어야 판별하고 운영 모드에서 거부한다', () => {

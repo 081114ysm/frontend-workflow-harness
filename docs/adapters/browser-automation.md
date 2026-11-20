@@ -55,6 +55,8 @@ export FRONTEND_HARNESS_BROWSER_AUTH='{"origin":"https://qa.example.com","fillEn
 
 응답 헤더를 추가하기 어려운 테스트 API는 규칙의 `source: "live"`, `verification: "upstream"`을 설정한다. 실행자가 시나리오 바깥에서 같은 origin과 경로를 승인하면 하네스가 Playwright `route.fetch`로 그 요청을 직접 전송한다. 리다이렉트와 응답 실패는 통과하지 않는다. 직접 전달이 입증하는 범위는 승인된 서버에 요청이 도달했다는 사실이다. 운영자가 실제 테스트 백엔드를 확인한 뒤 승인한다. [Playwright Route 문서](https://playwright.dev/docs/api/class-route#route-fetch)
 
+직접 전달 전에 반복 디코딩과 경로 정규화를 적용해 승인 범위를 확인한다. 인코딩된 슬래시·역슬래시와 상위 경로 이동으로 범위를 벗어나면 서버로 보내기 전에 차단한다.
+
 ```sh
 export FRONTEND_HARNESS_LIVE_UPSTREAMS='[{"origin":"https://qa-api.example.com","pathPrefix":"/api/orders"}]'
 ```
@@ -66,6 +68,8 @@ export FRONTEND_HARNESS_LIVE_UPSTREAMS='[{"origin":"https://qa-api.example.com",
 앱이 비운영 환경에서 MSW의 `setupWorker`를 시작한다. 시나리오에 `serviceWorkers: "msw"`, `engine: "chromium"`, `api.expect: "mock"`을 설정한다. 필수 Mock 규칙에 `mockProof`를 두고 해당 핸들러가 같은 헤더를 응답에 넣도록 한다. 예를 들어 `{ "name": "x-qa-mock", "value": "msw" }`를 두 곳에 지정한다.
 
 이 모드는 서비스 워커가 응답했고 표식까지 일치한 요청을 인정한다. 로그인 상태·환경변수 입력·성능 측정은 별도 시나리오에서 실행한다. Firefox와 WebKit의 같은 화면 QA에는 하네스 fixture 또는 HTTP Mock 서버를 사용한다. [MSW 브라우저 설정](https://mswjs.io/guides/integrations/browser) · [Playwright 서비스 워커 범위](https://playwright.dev/docs/service-workers)
+
+워커가 별도로 보낸 API 요청도 관측한다. 미등록 요청이나 확인되지 않은 네트워크 응답이 있으면 `unknown`으로 남긴다. 워커의 실제 요청은 보존하고 페이지에도 표시되는 동일한 미확인 대리 응답은 한 번만 집계한다.
 
 ## 성능 측정
 
