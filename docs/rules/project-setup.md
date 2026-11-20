@@ -45,6 +45,8 @@ node scripts/harness.mjs configure --from frontend-harness.config.json
 
 모노레포는 `cwd: "apps/web"`와 루트 패키지 매니저의 filter 인자를 실제 구조에 맞춰 사용한다. 실행하는 프로젝트와 `--root`가 같아야 한다. 설정을 바꾸면 기존 승인·검증 기록은 무효가 된다.
 
+Windows에서 Node에 동봉된 npm과 npx는 하네스가 Node CLI로 실행한다. 다른 패키지 관리자가 `.cmd` 파일로만 제공되면 실행 가능한 바이너리나 Node 진입 파일을 검사 인자 배열에 명시한다.
+
 선택 도구는 [어댑터 목록](../adapters/README.md)에서 필요한 것만 적용한다. 안 쓰는 어댑터를 삭제하며 core 링크를 깨뜨리지 않는다.
 
 자동 QA와 실제 API 출처 확인을 설정하려면 [브라우저 자동화](../adapters/browser-automation.md)를 따른다. 로그인, 테스트 데이터, 검증 URL·시나리오, 응답 출처 규칙은 프로젝트가 제공한다.

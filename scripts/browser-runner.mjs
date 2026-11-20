@@ -5,8 +5,8 @@ import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { inside, readJson, ensure, BROWSER_CHECKS } from './lib.mjs';
-import { METRICS, ScenarioError, parseScenario, authorizeBrowserCredentials, pageUrl, matchRule, classifyResponse, summarizeApi } from './browser-scenario.mjs';
+import { inside, readJson, ensure, sha, BROWSER_CHECKS } from './lib.mjs';
+import { METRICS, ScenarioError, parseScenario, authorizeBrowserCredentials, authorizeLiveUpstreams, pageUrl, matchRule, upstreamPathAllowed, classifyResponse, summarizeApi } from './browser-scenario.mjs';
 
 const readMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const apiTypes = new Set(['xhr', 'fetch']);
@@ -96,10 +96,50 @@ async function runStep(page, config, step) {
   throw new Error('assertion 불일치');
 }
 
+/** 승인된 목적지에 요청을 직접 보내고 리다이렉트나 실패를 실제 응답으로 기록하지 않는다. */
+async function forwardApi(route, rule, ledger, timeout) {
+  let response;
+  try {
+    ensure(upstreamPathAllowed(rule, new URL(route.request().url())), '직접 전달 API의 정규화된 경로가 승인 범위를 벗어남');
+    response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout });
+    if (response.status() >= 300 && response.status() < 400 && response.headers().location) {
+      throw new Error('직접 전달 API의 리다이렉트 거부');
+    }
+    ledger.forwarded.add(route.request());
+    await route.fulfill({ response });
+  } catch {
+    ledger.blocked++;
+    await route.abort('blockedbyclient').catch(() => {});
+  } finally {
+    await response?.dispose().catch(() => {});
+  }
+}
+
+/** 요청 식별값은 메모리 안에서 해시로 비교하고 보고서에는 남기지 않는다. */
+function responseKey(request, status) {
+  return sha(JSON.stringify([request.method(), request.url(), status, sha(request.postDataBuffer() ?? '')]));
+}
+
+/** API 대리 응답은 한 번만 집계하고 문서·리소스를 대신 받은 워커의 중복 기록은 제외한다. */
+function apiObservations(ledger) {
+  const duplicates = new Set();
+  for (const { key, item } of ledger.pageProxies) {
+    const replies = ledger.workerReplies.get(key) ?? [];
+    const index = replies.findIndex(reply => item !== null || reply.rule === null);
+    if (index >= 0) {
+      const [reply] = replies.splice(index, 1);
+      duplicates.add(item ?? reply);
+    }
+  }
+  return ledger.observations.filter(item => !duplicates.has(item));
+}
+
 /** 브라우저 컨텍스트에 요청 제한, fixture와 민감 값을 제외한 관측을 설치한다. */
 async function makeContext(browser, cfg, width, storageState, fixtures) {
-  const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', ...(storageState ? { storageState } : {}) });
-  const ledger = { requests: new Set(), fulfilled: new WeakSet(), observations: [], blocked: 0, errors: 0 };
+  const msw = cfg.serviceWorkers === 'msw';
+  const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: msw ? 'allow' : 'block', ...(storageState ? { storageState } : {}) });
+  const ledger = { requests: new Set(), fulfilled: new WeakSet(), forwarded: new WeakSet(), observations: [],
+    pageProxies: [], workerReplies: new Map(), blocked: 0, errors: 0 };
   const mockFor = request => {
     if (!fixtures) return null;
     const url = new URL(request.url());
@@ -117,12 +157,28 @@ async function makeContext(browser, cfg, width, storageState, fixtures) {
     const request = response.request();
     const status = response.status();
     const headers = response.headers();
-    if (!isApi(request) || status >= 300 && status < 400 && headers.location) return;
+    if (status >= 300 && status < 400 && headers.location) return;
+    if (!isApi(request)) {
+      if (!request.serviceWorker() && response.fromServiceWorker()) {
+        ledger.pageProxies.push({ key: responseKey(request, status), item: null });
+      }
+      return;
+    }
     const rule = matchRule(cfg.apiRules, new URL(response.url()));
-    ledger.observations.push({
-      ...classifyResponse({ rule, headers, fixture: ledger.fulfilled.has(request), serviceWorker: response.fromServiceWorker() }),
+    const item = {
+      ...classifyResponse({ rule, headers, fixture: ledger.fulfilled.has(request),
+        serviceWorker: response.fromServiceWorker(), msw, forwarded: ledger.forwarded.has(request) }),
       rule: rule?.id ?? null, status, httpOk: status >= 200 && status < 400 || Boolean(rule?.statuses.includes(status)),
-    });
+    };
+    ledger.observations.push(item);
+    if (item.mode === 'unknown') {
+      const key = responseKey(request, status);
+      if (request.serviceWorker()) {
+        const replies = ledger.workerReplies.get(key) ?? [];
+        replies.push(item);
+        ledger.workerReplies.set(key, replies);
+      } else if (response.fromServiceWorker()) ledger.pageProxies.push({ key, item });
+    }
   });
   context.on('page', page => {
     page.on('pageerror', () => ledger.errors++);
@@ -137,9 +193,15 @@ async function makeContext(browser, cfg, width, storageState, fixtures) {
         return route.abort('blockedbyclient');
       }
       const fixture = mockFor(request);
-      if (!fixture) return route.continue();
-      ledger.fulfilled.add(request);
-      return route.fulfill({ status: fixture.status, json: fixture.body });
+      if (fixture) {
+        ledger.fulfilled.add(request);
+        return route.fulfill({ status: fixture.status, json: fixture.body });
+      }
+      const rule = apiRule(request);
+      if (fixtures && apiTypes.has(request.resourceType()) && rule?.verification === 'upstream') {
+        return forwardApi(route, rule, ledger, cfg.timeoutMs);
+      }
+      return route.continue();
     });
     if (cfg.target === 'production' || cfg.usesCredentials) {
       await context.routeWebSocket('**/*', socket => {
@@ -181,9 +243,10 @@ async function runCases(browser, cfg, storageState) {
       const until = Date.now() + cfg.timeoutMs;
       while (ledger.requests.size && Date.now() < until) await delay(50);
       for (const request of ledger.requests) ledger.observations.push({ mode: 'unknown', reason: '관찰 시간 안에 응답이 끝나지 않음', rule: matchRule(cfg.apiRules, new URL(request.url()))?.id ?? null, status: null, httpOk: false });
+      const observed = apiObservations(ledger);
       viewports.push(width);
-      observations.push(...ledger.observations);
-      apiByViewport.push({ viewport: width, ...summarizeApi(ledger.observations, cfg.expect, cfg.apiRules) });
+      observations.push(...observed);
+      apiByViewport.push({ viewport: width, ...summarizeApi(observed, cfg.expect, cfg.apiRules) });
       errors += ledger.errors;
       blocked += ledger.blocked;
     } finally {
@@ -268,22 +331,35 @@ async function runPerformance(browser, cfg, storageState) {
   const { pages, viewport, runs, settleMs } = cfg.performance;
   const results = [];
   for (const entry of pages) {
-    const samples = []; let failed = 0;
+    const requested = pageUrl(cfg.origin, entry.path);
+    const samples = []; const failures = {}; let failed = 0;
     for (let i = 0; i < runs; i++) {
       const { context, ledger } = await makeContext(browser, cfg, viewport, storageState, false);
+      let phase = 'navigation';
       try {
         const page = await context.newPage();
         await page.addInitScript(observePaint);
-        const response = await page.goto(pageUrl(cfg.origin, entry.path), { waitUntil: 'load', timeout: cfg.timeoutMs });
-        ensure(response?.ok() && new URL(page.url()).origin === cfg.origin, '측정 문서 응답 실패');
+        const response = await page.goto(requested, { waitUntil: 'load', timeout: cfg.timeoutMs });
+        phase = 'http';
+        ensure(response?.ok(), '측정 문서 응답 실패');
+        phase = 'unexpected-url';
+        ensure(page.url() === requested, '측정 대상 URL과 실제 URL이 다름');
+        phase = 'ready';
         if (entry.ready) await locate(page, entry.ready).waitFor({ state: 'visible', timeout: cfg.timeoutMs });
         await delay(settleMs);
+        phase = 'unexpected-url';
+        ensure(page.url() === requested, '측정 도중 다른 URL로 이동');
+        phase = 'network-policy';
         ensure(!ledger.blocked, '네트워크 정책에 의해 측정 대상 리소스가 차단됨');
+        phase = 'metrics';
         samples.push(await page.evaluate(sampleMetrics));
-      } catch { failed++; }
+      } catch {
+        failed++;
+        failures[phase] = (failures[phase] ?? 0) + 1;
+      }
       finally { await context.close(); }
     }
-    results.push({ id: entry.id, failed, samples, ...measureBudget(samples, entry.budgets || {}, runs) });
+    results.push({ id: entry.id, failed, failures, samples, ...measureBudget(samples, entry.budgets || {}, runs) });
   }
   return { kind: 'navigation-lab', viewport, runs, settleMs, network: 'unthrottled', coldContext: true, browserCache: 'disabled-by-routing', pages: results, passed: results.every(page => page.passed) };
 }
@@ -303,6 +379,8 @@ export async function runBrowser({ root, input, widths, mode = 'qa' }) {
   const at = new Date().toISOString();
   try {
     config = parseScenario(input, widths, mode);
+    phase = '실제 API 전달 승인';
+    authorizeLiveUpstreams(config, process.env.FRONTEND_HARNESS_LIVE_UPSTREAMS);
     phase = '브라우저 자격 증명 승인';
     config.usesCredentials = authorizeBrowserCredentials(config, process.env.FRONTEND_HARNESS_BROWSER_AUTH);
     const storageState = readStorageState(root, config);

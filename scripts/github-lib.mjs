@@ -37,7 +37,7 @@ function numberFromUrl(url, repository, kind) {
 function bodyFile(root, relative) {
   const full = inside(root, relative);
   const body = fs.readFileSync(full, 'utf8');
-  ensure(body.trim() && !body.startsWith('---\n'), '실제 본문 파일 필요. CLI 본문에는 YAML frontmatter를 포함하지 않을 것');
+  ensure(body.trim() && !/^---\r?\n/.test(body), '실제 본문 파일 필요. CLI 본문에는 YAML frontmatter를 포함하지 않을 것');
   return full;
 }
 
